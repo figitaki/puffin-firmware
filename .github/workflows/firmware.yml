@@ -27,6 +27,8 @@ jobs:
         run: |
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeyInput.cpp -o /tmp/puffin-input-tests
           /tmp/puffin-input-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeymapConsole.cpp -o /tmp/puffin-keymap-tests
+          /tmp/puffin-keymap-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeyboardOutput.cpp -o /tmp/puffin-output-tests
           /tmp/puffin-output-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Sequencer.cpp -o /tmp/puffin-sequencer-tests

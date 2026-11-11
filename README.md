@@ -92,8 +92,55 @@ to change the layout; physical reboot persistence still needs board validation.
 
 These presets emit US-layout HID positions through the existing ASCII mapping.
 Use a US/QWERTY input source on the host, not a second Colemak/Dvorak remap.
-This is built-in preset selection, not arbitrary per-key remapping or a desktop
-configuration tool; those remain future work.
+There is no desktop configuration tool yet.
+
+## Persistent per-key overrides
+
+On ProS3, connect the native USB port and open a serial terminal at 115200 baud
+while in typing mode. Send the following ASCII commands with LF or CRLF endings;
+coordinates are zero-based matrix row/column, not key labels. Only base-layer
+keys are remapped. The Fn switch (row 4, column 8) is protected, so preset
+selection and mode/device controls remain reachable through the unchanged Fn
+layers even if the base GUI key is remapped.
+
+| Command | Meaning |
+| --- | --- |
+| `keymap get ROW COL` | Read the current base-layer action |
+| `keymap set ROW COL ACTION` | Set a position override |
+| `keymap reset ROW COL` | Remove one override, inheriting the selected preset |
+| `keymap clear` | Remove every override without changing the preset |
+
+For example, `keymap set 1 1 97` makes the physical Q position send lowercase A.
+`keymap reset 1 1` returns it to the selected preset. Actions are decimal:
+0 disables a switch; 32–126 are printable US ASCII; 128–135 are BLE Keyboard
+modifier actions; 136–255 use that library's non-printing HID encoding
+(136 + HID usage). For example, 128 is left Ctrl, 129 is left Shift, 178 is
+Backspace, and 179 is Tab. Internal commands, macros, and MIDI actions cannot be
+assigned. Nonexistent switches and invalid actions/coordinates are rejected.
+
+Responses start with `keymap`: `saved`, `unchanged`, `value N`,
+`session-only: save failed`, or `error: ...`. Existing debug logs can appear
+between replies. Duplicate sets and resets do not write flash. A save failure
+keeps the change in RAM; `unchanged` does not retry a previously failed save.
+Send at most 63 printable characters per command. Malformed, overlong, or
+control-character-containing lines are discarded through the next line ending,
+not executed as truncated commands.
+
+Overrides follow physical positions across preset changes and take precedence
+over the preset. Held keys retain their captured actions until release. Changed
+overrides are stored as one versioned `remap` blob in `puffin-keys`, separately
+from the preset ID and existing EEPROM. At boot, wrong-size, unknown-version,
+or invalid records are ignored in full; no partial map is applied. Version 1 is
+121 bytes: a version byte (1), then 60 row-major little-endian uint16 actions,
+where 0xFFFF means inherit. Board/matrix-format changes require a format update.
+
+The console reads at most 16 bytes per loop and only when native USB CDC is
+enabled and typing mode is active. It never reads the Serial0 MIDI UART; MIDI
+mode does not process configuration commands or write remap flash. Flash writes
+and serial replies can still pause typing briefly, so configure while idle.
+Physical USB interaction, power-cycle persistence and BLE delivery still need
+board validation. No Fn-layer remapping, BLE configuration service, or MIDI-map
+editing is implemented.
 
 ## Sequencer note safety (foundation)
 

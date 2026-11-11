@@ -3,6 +3,7 @@
 #include "KeyInput.h"
 #include "KeyboardOutput.h"
 #include "TypingLayout.h"
+#include "KeymapConsole.h"
 #include <Preferences.h>
 #include <PuffinBrain.h>
 #include <Control_Surface.h>
@@ -30,6 +31,7 @@ int screenSpeed = 10000;
 int extClockCount = 0;
 
 TypingLayout typingLayout(Layout);
+KeymapConsole keymapConsole(typingLayout);
 Preferences typingPreferences;
 bool typingPreferencesReady = false;
 
@@ -105,6 +107,11 @@ void setup() {
     if(typingPreferencesReady) {
       // Missing or invalid IDs retain the constructor's safe QWERTY default.
       typingLayout.select(typingPreferences.getUChar("layout", TypingLayout::Qwerty));
+      uint8_t record[TypingLayout::StorageSize];
+      if(typingPreferences.getBytesLength("remap") == sizeof(record) &&
+         typingPreferences.getBytes("remap", record, sizeof(record)) == sizeof(record)) {
+        typingLayout.restore(record, sizeof(record)); // Invalid records leave defaults intact.
+      }
     }
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     Kbd.begin();
@@ -155,6 +162,30 @@ void sendTypingReport() {
   KeyReport report = {};
   keyboardOutput.report(report.modifiers, report.keys);
   Kbd.sendReport(&report);
+}
+
+void updateKeymapConsole() {
+#if ARDUINO_USB_CDC_ON_BOOT
+  // ProS3 Serial is native USB CDC, not the Serial0 MIDI UART. Never read it
+  // in MIDI mode or wait for a whole line; bound work between matrix scans.
+  if(midiMode) return;
+  for(int count = 0; count < 16 && Serial.available(); ++count) {
+    const auto result = keymapConsole.feed(Serial.read());
+    if(result == KeymapConsole::Changed) {
+      uint8_t record[TypingLayout::StorageSize];
+      typingLayout.encode(record);
+      const bool saved = typingPreferencesReady &&
+        typingPreferences.putBytes("remap", record, sizeof(record)) == sizeof(record);
+      Serial.println(saved ? "keymap saved" : "keymap session-only: save failed");
+    } else if(result == KeymapConsole::Okay) {
+      Serial.println("keymap unchanged");
+    } else if(result == KeymapConsole::Value) {
+      Serial.printf("keymap value %d\n", keymapConsole.value());
+    } else if(result == KeymapConsole::Error) {
+      Serial.println("keymap error: invalid command, position, or action");
+    }
+  }
+#endif
 }
 
 void handleKeyEvent(const KeyInput::Event &event) {
@@ -282,6 +313,7 @@ void loop() {
   while (keyInput.nextEvent(midiMode ? MIDIMap : Layout, event)) {
     handleKeyEvent(event);
   }
+  updateKeymapConsole();
   
   //Delay so it's not too fast
   if(not midiMode){ delay(1); screenSpeed = 10000; }
