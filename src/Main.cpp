@@ -11,6 +11,7 @@
 #include <MIDI.h>
 #include <BleKeyboard.h>  
 #include <BLEDevice.h>
+#include "BleAuthDiagnostics.h"
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 #include "Graphics.h"
@@ -120,7 +121,9 @@ void setup() {
     BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
 
     //Begin bluetooth keyboard, without keyboard will not appear or connect
+    beginBleAuthDiagnostics();
     Kbd.begin();
+    logBleBondCount("boot-after-ble-init");
   }
 
 }
