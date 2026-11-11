@@ -115,10 +115,9 @@ void setup() {
         typingLayout.restore(record, sizeof(record)); // Invalid records leave defaults intact.
       }
     }
-    // The Bluedroid BLE Keyboard library configures SC/MITM bonding but leaves
-    // BLEDevice's connection-time encryption request disabled. Request the
-    // same MITM-protected encryption level before advertising begins.
-    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
+    // Request encryption without requiring MITM from a NoInputNoOutput
+    // keyboard. Keep the library's pairing policy and existing bonds intact.
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
 
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     beginBleAuthDiagnostics();
