@@ -11,6 +11,7 @@
 #include <MIDI.h>
 #include <BleKeyboard.h>  
 #include <BLEDevice.h>
+#include <BLESecurity.h>
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 #include "Graphics.h"
@@ -114,11 +115,23 @@ void setup() {
         typingLayout.restore(record, sizeof(record)); // Invalid records leave defaults intact.
       }
     }
-    // HID report descriptors require encryption. Request it on each connection,
-    // including reconnects that reuse an existing bond.
+    // Request encryption without requiring MITM from a NoInputNoOutput
+    // keyboard. Keep the library's pairing policy and existing bonds intact.
     BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     Kbd.begin();
+    // BleKeyboard requires MITM even though this keyboard has no pairing I/O.
+    // Keep Secure Connections and bonding, but permit encrypted no-MITM pairing.
+    BLESecurity().setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
+    // Distribute only the encryption and identity keys. With Bluedroid's
+    // default masks a host that requests a BR/EDR link key (macOS does) makes
+    // the stack derive one from the LTK after encryption; that derivation
+    // fails on this LE-only link, pairing ends with SMP "unspecified reason"
+    // (auth fail 0x55) and no bond is stored.
+    BLESecurity keyPolicy;
+    keyPolicy.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    keyPolicy.setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   }
 
 }
