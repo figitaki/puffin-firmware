@@ -20,7 +20,8 @@ struct Keyboard {
     }
 
     bool sample(int row, int col, bool down, uint32_t time) {
-        return input.sample(row, col, down, time, map, event);
+        input.sample(row, col, down, time);
+        return input.nextEvent(map, event);
     }
 
     void edge(int row, int col, bool down, uint32_t time, int action) {
@@ -162,6 +163,54 @@ void emptyMappingDoesNotActivateALayer() {
     keyboard.edge(1, 0, false, 20, 0);
 }
 
+void simultaneousLayerPressesIgnoreScanOrder() {
+    Keyboard keyboard;
+    // GUI and a typing key are scanned before Fn, but must resolve after it.
+    for (uint32_t time = 0; time <= 5; time += 5) {
+        keyboard.input.sample(4, 2, true, time);
+        keyboard.input.sample(1, 0, true, time);
+        keyboard.input.sample(4, 8, true, time);
+    }
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == FUNCTION_SW && keyboard.event.pressed);
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == FUNCTION_SW2 && keyboard.event.pressed);
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == 'c' && keyboard.event.pressed);
+    assert(!keyboard.input.nextEvent(keyboard.map, keyboard.event));
+
+    // Simultaneous layer releases precede an earlier-column ordinary press.
+    for (uint32_t time = 10; time <= 15; time += 5) {
+        keyboard.input.sample(1, 1, true, time);
+        keyboard.input.sample(4, 2, false, time);
+        keyboard.input.sample(4, 8, false, time);
+    }
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == FUNCTION_SW2 && !keyboard.event.pressed);
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == FUNCTION_SW && !keyboard.event.pressed);
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == 'a' && keyboard.event.pressed);
+    assert(!keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    keyboard.edge(1, 0, false, 20, 'c');
+}
+
+void sharedActionsRetainAllOwners() {
+    Keyboard keyboard;
+    keyboard.map[0][0][5] = '3';
+    keyboard.map[1][1][3] = '3';
+    keyboard.edge(0, 5, true, 0, '3');
+    assert(keyboard.input.heldCount('3') == 1);
+    keyboard.edge(4, 8, true, 10, FUNCTION_SW);
+    keyboard.edge(1, 3, true, 20, '3');
+    assert(keyboard.input.heldCount('3') == 2);
+    keyboard.edge(0, 5, false, 30, '3');
+    assert(keyboard.input.heldCount('3') == 1);
+    keyboard.edge(4, 8, false, 40, FUNCTION_SW);
+    keyboard.edge(1, 3, false, 50, '3');
+    assert(keyboard.input.heldCount('3') == 0);
+}
+
 int main() {
     debounce();
     independentSwitches();
@@ -171,5 +220,7 @@ int main() {
     clockWraparound();
     onlyPopulatedSwitchesGenerateEvents();
     emptyMappingDoesNotActivateALayer();
+    simultaneousLayerPressesIgnoreScanOrder();
+    sharedActionsRetainAllOwners();
     puts("Key input regression tests passed");
 }

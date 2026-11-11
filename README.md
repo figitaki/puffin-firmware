@@ -29,6 +29,10 @@ Each fitted switch is debounced for 5 ms, independently of loop speed and the
 other switches. Pressing a key captures its action; releasing it releases that
 same action even if a layer or mapping changes while it is held. Changing layers
 does not release unrelated held keys. Unpopulated matrix positions are ignored.
+When several switches hold the same action, only the first press and last release
+are dispatched. A full scan is collected before resolving transitions: releases
+first, then layer-key presses, then ordinary presses. Fn+GUI therefore selects the
+number-pad layer even when both keys become debounced in the same scan.
 
 In typing mode, hold Fn for the function layer. While holding Fn, hold the GUI
 key to enter the existing number-pad layer. The number-pad layer remains active
@@ -36,6 +40,8 @@ until GUI is released, even if Fn is released first. Ordinary GUI presses in the
 base layer still behave as GUI. In MIDI mode, Fn selects the MIDI function map;
 musical actions do not also send typing reports. Mode and device changes retain
 their existing restart behavior.
+The screenshot shortcut releases only keys/modifiers it added, rather than
+clearing unrelated held keys or overlapping Shift, GUI, or `5` owners.
 
 The host-side regression tests need only a C++11 compiler, not a connected board:
 

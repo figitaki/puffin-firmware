@@ -134,6 +134,11 @@ int LED = 0;
 void handleKeyEvent(const KeyInput::Event &event) {
   const int action = event.action;
 
+  // Multiple physical switches may map to the same action. Dispatch its
+  // first press and last release, not every switch's ownership transition.
+  const int held = keyInput.heldCount(action);
+  if (event.pressed ? held > 1 : held > 0) return;
+
   // These commands are shared; all other actions belong to one mode only.
   switch (action) {
     case 0:
@@ -184,10 +189,19 @@ void handleKeyEvent(const KeyInput::Event &event) {
       break;
     case KEY_SS:
       if (event.pressed) {
+        // BLE Keyboard synthesizes left Shift for shifted ASCII characters.
+        // Preserve those owners as well as explicit modifier/key presses.
+        bool shiftHeld = keyInput.heldCount(KEY_LEFT_SHIFT) != 0;
+        for (const char *key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ~!@#$%^&*()_+{}|:\"<>?";
+             *key; ++key) {
+          shiftHeld |= keyInput.heldCount(*key) != 0;
+        }
         Kbd.press(KEY_LEFT_GUI);
         Kbd.press(KEY_LEFT_SHIFT);
         Kbd.press('5');
-        Kbd.releaseAll();
+        if (!keyInput.heldCount('5') && !keyInput.heldCount('%')) Kbd.release('5');
+        if (!shiftHeld) Kbd.release(KEY_LEFT_SHIFT);
+        if (!keyInput.heldCount(KEY_LEFT_GUI)) Kbd.release(KEY_LEFT_GUI);
       }
       break;
     default:
@@ -224,13 +238,13 @@ void loop() {
     delayMicroseconds(5);
     const uint32_t now = millis();
     for (int row = 0; row < RowCount; ++row) {
-      KeyInput::Event event;
-      if (keyInput.sample(row, col, digitalRead(Rows[row]) == HIGH, now,
-                          midiMode ? MIDIMap : Layout, event)) {
-        handleKeyEvent(event);
-      }
+      keyInput.sample(row, col, digitalRead(Rows[row]) == HIGH, now);
     }
     digitalWrite(Cols[col], LOW);
+  }
+  KeyInput::Event event;
+  while (keyInput.nextEvent(midiMode ? MIDIMap : Layout, event)) {
+    handleKeyEvent(event);
   }
   
   //Delay so it's not too fast
