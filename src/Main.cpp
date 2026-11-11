@@ -11,6 +11,7 @@
 #include <MIDI.h>
 #include <BleKeyboard.h>  
 #include <BLEDevice.h>
+#include <BLESecurity.h>
 #include "BleAuthDiagnostics.h"
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
@@ -122,6 +123,9 @@ void setup() {
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     beginBleAuthDiagnostics();
     Kbd.begin();
+    // BleKeyboard requires MITM even though this keyboard has no pairing I/O.
+    // Keep Secure Connections and bonding, but permit encrypted no-MITM pairing.
+    BLESecurity().setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
     logBleBondCount("boot-after-ble-init");
   }
 
