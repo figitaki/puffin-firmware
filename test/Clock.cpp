@@ -87,9 +87,40 @@ void externalTempoTransportAndTimeout() {
     assert(clock.getBPM() == 0);
 }
 
+void externalTempoKeepsLastValidEstimate() {
+    for (auto source : {Clock::BLE, Clock::TRS}) {
+        Clock clock;
+        clock.setSource(source);
+        uint32_t now = 0;
+        clock.externalPulse(now);
+        auto window = [&](uint32_t duration) {
+            const uint32_t start = now;
+            for (uint32_t i = 1; i <= 24; ++i) {
+                now = start + uint32_t(uint64_t(i) * duration / 24);
+                clock.externalPulse(now);
+            }
+        };
+        window(600000); // 100 BPM, followed by zero-duration/invalid windows.
+        assert(clock.getBPM() == 100);
+        for (uint32_t duration : {0U, 100000U, 6000000U}) {
+            window(duration);
+            assert(clock.getBPM() == 100);
+        }
+        window(200000);
+        assert(clock.getBPM() == 300);
+        window(3000000);
+        assert(clock.getBPM() == 20);
+        window(800000);
+        assert(clock.getBPM() == 75);
+        clock.setSource(source == Clock::BLE ? Clock::TRS : Clock::BLE);
+        assert(clock.getBPM() == 0); // Estimates belong to one clock input.
+    }
+}
+
 int main() {
     exactTempoAndWrap();
     tempoChangeAndStallBoundary();
     externalTempoTransportAndTimeout();
+    externalTempoKeepsLastValidEstimate();
     puts("Clock transport regression tests passed");
 }

@@ -79,7 +79,7 @@ public:
         } else if (++measuredPulses == 24) {
             const uint32_t elapsed = now - measuredAt;
             const uint32_t value = elapsed ? uint32_t(60000000ULL / elapsed) : 0;
-            measuredBPM = value >= 20 && value <= 300 ? int(value) : 0;
+            if (value >= 20 && value <= 300) measuredBPM = int(value);
             measuredAt = now;
             measuredPulses = 0;
         }
