@@ -30,9 +30,9 @@ public:
     }
 
     bool nextEvent(const Keymap &keymap, Event &event) {
-        // Releases use their captured actions. Then resolve layer presses
-        // before ordinary presses, regardless of their matrix positions.
-        for (int phase = 0; phase < 3; ++phase) {
+        // Releases use their captured actions. Layer presses precede HID
+        // modifiers, which precede ordinary presses regardless of position.
+        for (int phase = 0; phase < 4; ++phase) {
             for (int row = 0; row < RowCount; ++row) {
                 for (int col = 0; col < ColCount; ++col) {
                     State &key = keys[row][col];
@@ -42,6 +42,8 @@ public:
                                                : key.action;
                     if (phase == 1 && action != FUNCTION_SW &&
                         action != FUNCTION_SW2) continue;
+                    // BLE Keyboard's eight explicit modifier action codes.
+                    if (phase == 2 && (action < 0x80 || action > 0x87)) continue;
                     key.ready = false;
                     key.pressed = key.raw;
                     key.action = action;

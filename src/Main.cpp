@@ -1,6 +1,7 @@
 #include <Matrix.h>
 #include <MIDIMap.h>
 #include "KeyInput.h"
+#include "KeyboardOutput.h"
 #include <PuffinBrain.h>
 #include <Control_Surface.h>
 //#include "Seq.h"
@@ -127,9 +128,19 @@ void animation1()
 }
 
 KeyInput keyInput;
+// Reuse the exported translation table from the pinned BLE Keyboard library.
+// ESP32 flash is memory-mapped; no second ASCII map needs to be maintained.
+extern const uint8_t _asciimap[128];
+KeyboardOutput keyboardOutput(_asciimap);
 int color = 0;
 int pixel = 0;
 int LED = 0;
+
+void sendTypingReport() {
+  KeyReport report = {};
+  keyboardOutput.report(report.modifiers, report.keys);
+  Kbd.sendReport(&report);
+}
 
 void handleKeyEvent(const KeyInput::Event &event) {
   const int action = event.action;
@@ -189,19 +200,14 @@ void handleKeyEvent(const KeyInput::Event &event) {
       break;
     case KEY_SS:
       if (event.pressed) {
-        // BLE Keyboard synthesizes left Shift for shifted ASCII characters.
-        // Preserve those owners as well as explicit modifier/key presses.
-        bool shiftHeld = keyInput.heldCount(KEY_LEFT_SHIFT) != 0;
-        for (const char *key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ~!@#$%^&*()_+{}|:\"<>?";
-             *key; ++key) {
-          shiftHeld |= keyInput.heldCount(*key) != 0;
-        }
-        Kbd.press(KEY_LEFT_GUI);
-        Kbd.press(KEY_LEFT_SHIFT);
-        Kbd.press('5');
-        if (!keyInput.heldCount('5') && !keyInput.heldCount('%')) Kbd.release('5');
-        if (!shiftHeld) Kbd.release(KEY_LEFT_SHIFT);
-        if (!keyInput.heldCount(KEY_LEFT_GUI)) Kbd.release(KEY_LEFT_GUI);
+        keyboardOutput.press(KEY_LEFT_GUI);
+        keyboardOutput.press(KEY_LEFT_SHIFT);
+        keyboardOutput.press('5');
+        sendTypingReport();
+        keyboardOutput.release('5');
+        keyboardOutput.release(KEY_LEFT_SHIFT);
+        keyboardOutput.release(KEY_LEFT_GUI);
+        sendTypingReport();
       }
       break;
     default:
@@ -212,10 +218,11 @@ void handleKeyEvent(const KeyInput::Event &event) {
         } else {
           firstSpace = true;
         }
-        Kbd.press(action);
+        keyboardOutput.press(action);
       } else {
-        Kbd.release(action);
+        keyboardOutput.release(action);
       }
+      sendTypingReport();
   }
 }
 

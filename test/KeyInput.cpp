@@ -211,6 +211,32 @@ void sharedActionsRetainAllOwners() {
     assert(keyboard.input.heldCount('3') == 0);
 }
 
+void simultaneousModifiersPrecedeTyping() {
+    Keyboard keyboard;
+    keyboard.map[0][1][1] = 'q';
+    // BLE Keyboard encodes left Shift/Ctrl/GUI as 0x81/0x80/0x83.
+    keyboard.map[0][3][0] = 0x81;
+    keyboard.map[0][4][0] = 0x80;
+    keyboard.map[0][4][2] = 0x83;
+    for (uint32_t time = 0; time <= 5; time += 5) {
+        keyboard.input.sample(1, 1, true, time);
+        keyboard.input.sample(3, 0, true, time);
+        keyboard.input.sample(4, 0, true, time);
+        keyboard.input.sample(4, 2, true, time);
+    }
+    int modifiers = 0;
+    for (int i = 0; i < 3; ++i) {
+        assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+        assert(keyboard.event.pressed);
+        assert(keyboard.event.action >= 0x80 && keyboard.event.action <= 0x87);
+        modifiers |= 1 << (keyboard.event.action - 0x80);
+    }
+    assert(modifiers == 0x0B);
+    assert(keyboard.input.nextEvent(keyboard.map, keyboard.event));
+    assert(keyboard.event.action == 'q' && keyboard.event.pressed);
+    assert(!keyboard.input.nextEvent(keyboard.map, keyboard.event));
+}
+
 int main() {
     debounce();
     independentSwitches();
@@ -222,5 +248,6 @@ int main() {
     emptyMappingDoesNotActivateALayer();
     simultaneousLayerPressesIgnoreScanOrder();
     sharedActionsRetainAllOwners();
+    simultaneousModifiersPrecedeTyping();
     puts("Key input regression tests passed");
 }

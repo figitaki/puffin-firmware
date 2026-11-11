@@ -31,8 +31,10 @@ same action even if a layer or mapping changes while it is held. Changing layers
 does not release unrelated held keys. Unpopulated matrix positions are ignored.
 When several switches hold the same action, only the first press and last release
 are dispatched. A full scan is collected before resolving transitions: releases
-first, then layer-key presses, then ordinary presses. Fn+GUI therefore selects the
-number-pad layer even when both keys become debounced in the same scan.
+first, then layer-key presses, then HID modifier presses, then ordinary presses.
+Fn+GUI therefore selects the number-pad layer even when both keys become
+debounced in the same scan, and same-scan Shift/Ctrl/GUI chords send the modifier
+before the letter.
 
 In typing mode, hold Fn for the function layer. While holding Fn, hold the GUI
 key to enter the existing number-pad layer. The number-pad layer remains active
@@ -42,12 +44,20 @@ musical actions do not also send typing reports. Mode and device changes retain
 their existing restart behavior.
 The screenshot shortcut releases only keys/modifiers it added, rather than
 clearing unrelated held keys or overlapping Shift, GUI, or `5` owners.
+Typing reports track owners of translated HID usages and modifier bits, so
+distinct actions such as `9` and `(` can share a key, and releasing a shifted
+character does not clear a still-held physical Shift. Translation reuses the
+exported ASCII table from the pinned BLE Keyboard library. The existing BLE
+report has six ordinary key slots; more than six distinct usages send standard
+ErrorRollOver until enough keys release, without discarding held state.
 
 The host-side regression tests need only a C++11 compiler, not a connected board:
 
 ```sh
 g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/KeyInput.cpp -o /tmp/puffin-input-tests
 /tmp/puffin-input-tests
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/KeyboardOutput.cpp -o /tmp/puffin-output-tests
+/tmp/puffin-output-tests
 ```
 
 CI also runs these tests with address and undefined-behavior sanitizers. The
