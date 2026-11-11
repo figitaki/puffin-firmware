@@ -10,6 +10,7 @@
 //#include "Seq.h"
 #include <MIDI.h>
 #include <BleKeyboard.h>  
+#include <BLEDevice.h>
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 #include "Graphics.h"
@@ -113,6 +114,9 @@ void setup() {
         typingLayout.restore(record, sizeof(record)); // Invalid records leave defaults intact.
       }
     }
+    // HID report descriptors require encryption. Request it on each connection,
+    // including reconnects that reuse an existing bond.
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     Kbd.begin();
   }
