@@ -10,6 +10,7 @@
 //#include "Seq.h"
 #include <MIDI.h>
 #include <BleKeyboard.h>  
+#include <BLEDevice.h>
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 #include "Graphics.h"
@@ -113,6 +114,11 @@ void setup() {
         typingLayout.restore(record, sizeof(record)); // Invalid records leave defaults intact.
       }
     }
+    // The Bluedroid BLE Keyboard library configures SC/MITM bonding but leaves
+    // BLEDevice's connection-time encryption request disabled. Request the
+    // same MITM-protected encryption level before advertising begins.
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
+
     //Begin bluetooth keyboard, without keyboard will not appear or connect
     Kbd.begin();
   }
