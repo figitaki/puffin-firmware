@@ -1,6 +1,8 @@
 #include <assert.h>
+#include <array>
 #include <initializer_list>
 #include <stdio.h>
+#include <vector>
 #include "KeyboardOutput.h"
 
 struct Keyboard {
@@ -70,27 +72,60 @@ void synthesizedAndPhysicalShiftShareOwnership() {
     keyboard.expect(0, {});
 }
 
-void screenshotBorrowsItsOwners() {
+void screenshotEmitsFreshPressAndRestoresOwners() {
+    using Report = std::array<uint8_t, 7>;
+    for (uint8_t heldAction : {'5', '%'}) {
+        Keyboard keyboard;
+        keyboard.output.press('q');
+        keyboard.output.press(heldAction);
+        keyboard.output.press(0x83); // physical GUI
+        keyboard.output.press(0x85); // independent right Shift
+        const uint8_t modifiers = heldAction == '%' ? 0x2A : 0x28;
+        std::vector<Report> sent;
+        auto send = [&](uint8_t mod, const uint8_t (&keys)[6]) {
+            sent.push_back({{mod, keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]}});
+        };
+        assert(keyboard.output.tapUsage(0x22, 0x0A, send));
+        // Releasing only 5 creates a fresh down edge; unrelated q and held
+        // modifiers survive every report. Final ownership is unchanged.
+        assert((sent == std::vector<Report>{
+            {{modifiers, 0x14, 0, 0, 0, 0, 0}},
+            {{0x2A, 0x14, 0x22, 0, 0, 0, 0}},
+            {{modifiers, 0x14, 0x22, 0, 0, 0, 0}}
+        }));
+        keyboard.expect(modifiers, {0x14, 0x22});
+        keyboard.output.release(heldAction);
+        keyboard.expect(0x28, {0x14});
+        sent.clear();
+        assert(keyboard.output.tapUsage(0x22, 0x0A, send));
+        assert((sent == std::vector<Report>{
+            {{0x2A, 0x14, 0x22, 0, 0, 0, 0}},
+            {{0x28, 0x14, 0, 0, 0, 0, 0}}
+        }));
+        keyboard.output.release('q');
+        keyboard.output.release(0x83);
+        keyboard.output.release(0x85);
+        keyboard.expect(0, {});
+    }
+}
+
+void screenshotDoesNotEvictOtherKeys() {
     Keyboard keyboard;
-    keyboard.output.press('q');
-    keyboard.output.press('%');
-    keyboard.output.press(0x83); // physical GUI
-    keyboard.output.press(0x85); // independent right Shift
-    keyboard.expect(0x2A, {0x14, 0x22});
-    keyboard.output.press(0x83);
-    keyboard.output.press(0x81);
-    keyboard.output.press('5');
-    keyboard.expect(0x2A, {0x14, 0x22});
-    keyboard.output.release('5');
-    keyboard.output.release(0x81);
-    keyboard.output.release(0x83);
-    keyboard.expect(0x2A, {0x14, 0x22});
-    keyboard.output.release('%');
-    keyboard.expect(0x28, {0x14});
-    keyboard.output.release('q');
-    keyboard.output.release(0x83);
-    keyboard.output.release(0x85);
-    keyboard.expect(0, {});
+    for (int usage = 4; usage <= 9; ++usage) keyboard.output.press(136 + usage);
+    int reports = 0;
+    auto send = [&](uint8_t, const uint8_t (&)[6]) { ++reports; };
+    assert(!keyboard.output.tapUsage(0x22, 0x0A, send));
+    assert(reports == 0);
+    keyboard.expect(0, {4, 5, 6, 7, 8, 9});
+    keyboard.output.press(136 + 10);
+    assert(!keyboard.output.tapUsage(0x22, 0x0A, send));
+    assert(reports == 0);
+    keyboard.expect(0, {1, 1, 1, 1, 1, 1});
+    keyboard.output.release(136 + 10);
+    keyboard.output.release(136 + 9);
+    assert(keyboard.output.tapUsage(0x22, 0x0A, send));
+    assert(reports == 2);
+    keyboard.expect(0, {4, 5, 6, 7, 8});
 }
 
 void rolloverRecoversWithoutLosingOwners() {
@@ -112,7 +147,8 @@ void rolloverRecoversWithoutLosingOwners() {
 int main() {
     aliasesKeepSharedUsages();
     synthesizedAndPhysicalShiftShareOwnership();
-    screenshotBorrowsItsOwners();
+    screenshotEmitsFreshPressAndRestoresOwners();
+    screenshotDoesNotEvictOtherKeys();
     rolloverRecoversWithoutLosingOwners();
     puts("Keyboard output regression tests passed");
 }

@@ -42,8 +42,12 @@ until GUI is released, even if Fn is released first. Ordinary GUI presses in the
 base layer still behave as GUI. In MIDI mode, Fn selects the MIDI function map;
 musical actions do not also send typing reports. Mode and device changes retain
 their existing restart behavior.
-The screenshot shortcut releases only keys/modifiers it added, rather than
-clearing unrelated held keys or overlapping Shift, GUI, or `5` owners.
+The screenshot shortcut temporarily releases the `5` usage if `5` or `%` is
+already held, so the host sees a fresh shortcut key-down. It then restores the
+physical report without changing any held-key ownership. Unrelated keys and
+modifiers stay held throughout. If all six report slots are occupied by other
+keys (or the keyboard is in rollover), the shortcut is skipped rather than
+evicting another key.
 Typing reports track owners of translated HID usages and modifier bits, so
 distinct actions such as `9` and `(` can share a key, and releasing a shifted
 character does not clear a still-held physical Shift. Translation reuses the
@@ -94,3 +98,26 @@ per-pulse stepping, local transport bindings, and chord action still need work.
 There is no independent gate scheduler, multi-track engine, or project storage.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
+
+## Display scheduling
+
+The loop sends the 128 x 32 OLED framebuffer incrementally: one address command,
+then sixteen 32-byte data chunks, with input/MIDI polling between transactions.
+Each transaction uses 400 kHz I2C and restores the library's default 100 kHz bus
+clock afterward. Rendering waits until the preceding frame finishes, so bytes
+from two frames cannot be mixed. A failed transaction abandons the frame; the
+next refresh starts again with the address command. Drawing and pixel layout
+are unchanged. Boot-only display helpers still use the library's blocking API.
+
+This removes the loop's full-frame I2C stall, not every possible scan delay:
+bus timeouts, BLE calls, and other loop work can still block. Measure worst-case
+scan intervals and short-press capture on ProS3 hardware before claiming a
+maximum input latency or reliable capture of every press longer than 5 ms.
+
+CI checks complete framebuffer byte order, one-transaction updates, and bus-error
+recovery with a simulated bus. Run its native test with:
+
+```sh
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/DisplayTransfer.cpp -o /tmp/puffin-display-tests
+/tmp/puffin-display-tests
+```
