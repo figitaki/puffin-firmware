@@ -126,6 +126,14 @@ void setup() {
     // BleKeyboard requires MITM even though this keyboard has no pairing I/O.
     // Keep Secure Connections and bonding, but permit encrypted no-MITM pairing.
     BLESecurity().setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
+    // Distribute only the encryption and identity keys. With Bluedroid's
+    // default masks a host that requests a BR/EDR link key (macOS does) makes
+    // the stack derive one from the LTK after encryption; that derivation
+    // fails on this LE-only link, pairing ends with SMP "unspecified reason"
+    // (auth fail 0x55) and no bond is stored.
+    BLESecurity keyPolicy;
+    keyPolicy.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    keyPolicy.setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
     logBleBondCount("boot-after-ble-init");
   }
 
