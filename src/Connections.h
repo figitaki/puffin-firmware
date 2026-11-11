@@ -1,6 +1,3 @@
-#define OFF 0
-#define ON 1
-
 /* Swapped Version
 #define Row1 14
 #define Row2 27
@@ -97,4 +94,3 @@
 #define BPM_INC         332
 #define BPM_DEC         333
 #define SEQ_CLEAR       334
-

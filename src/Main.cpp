@@ -1,5 +1,6 @@
 #include <Matrix.h>
 #include <MIDIMap.h>
+#include "KeyInput.h"
 #include <PuffinBrain.h>
 #include <Control_Surface.h>
 //#include "Seq.h"
@@ -125,11 +126,84 @@ void animation1()
   }
 }
 
-int ColCnt = 0;  //Keep track of scanned row - needs to be outside of the void loop so it isn't reset
-int LayerCnt = 0;
+KeyInput keyInput;
 int color = 0;
 int pixel = 0;
 int LED = 0;
+
+void handleKeyEvent(const KeyInput::Event &event) {
+  const int action = event.action;
+
+  // These commands are shared; all other actions belong to one mode only.
+  switch (action) {
+    case 0:
+    case FUNCTION_SW:
+    case FUNCTION_SW2:
+    case NULL_CON:
+      return;
+    case MIDI_MODE:
+      if (event.pressed) setMidiMode(!midiMode);
+      return;
+    case CHANGE_ID0:
+    case CHANGE_ID1:
+    case CHANGE_ID2:
+    case CHANGE_ID3:
+      if (event.pressed) storeMacEEPROM(action - CHANGE_ID0);
+      return;
+    case LED_B0:
+      if (event.pressed) pixels.setBrightness(0);
+      return;
+    case LED_B1:
+      if (event.pressed) {
+        pixels.setBrightness(5);
+        LED_DELAY = 500;
+      }
+      return;
+    case LED_B2:
+      if (event.pressed) {
+        pixels.setBrightness(40);
+        LED_DELAY = 20;
+      }
+      return;
+  }
+
+  if (midiMode) {
+    if (event.pressed) processMIDIPress(action);
+    else processMIDIRelease(action);
+    return;
+  }
+
+  switch (action) {
+    case NEXT:
+      if (event.pressed) Kbd.press(KEY_MEDIA_NEXT_TRACK);
+      else Kbd.release(KEY_MEDIA_NEXT_TRACK);
+      break;
+    case PREV:
+      if (event.pressed) Kbd.press(KEY_MEDIA_PREVIOUS_TRACK);
+      else Kbd.release(KEY_MEDIA_PREVIOUS_TRACK);
+      break;
+    case KEY_SS:
+      if (event.pressed) {
+        Kbd.press(KEY_LEFT_GUI);
+        Kbd.press(KEY_LEFT_SHIFT);
+        Kbd.press('5');
+        Kbd.releaseAll();
+      }
+      break;
+    default:
+      if (event.pressed) {
+        if (action == ' ') {
+          spaceHit();
+          firstSpace = false;
+        } else {
+          firstSpace = true;
+        }
+        Kbd.press(action);
+      } else {
+        Kbd.release(action);
+      }
+  }
+}
 
 //Loops to iterate through all functions
 void loop() {
@@ -143,177 +217,20 @@ void loop() {
     MIDI_Interface::updateAll();
 }
 
-  //Check if the keyboard is connected, if so, scan the matrix
-  if(true) //Kbd.isConnected()) // || midi_ble.isConnected())
-  {
-    //Initialize new Column to scan
-    digitalWrite(Cols[ColCnt],HIGH);
-
-    //Check rows
-    int RowCnt = 0;
-
-    //Repeat until all columns are scanned
-    while(RowCnt <= (RowCount - 1))
-    {
-      //Check state of current position, and make sure it was previously off
-      if(digitalRead( Rows[RowCnt] ) == HIGH && PressedCheck[LayerCnt][RowCnt][ColCnt] == OFF)
-      {
-        if(midiMode){
-          processMIDIPress(MIDIMap[LayerCnt][RowCnt][ColCnt]);
-        }
-        //Switch based on the key pressed, allows for unique functions other than alphanumerics
-        switch(Layout[LayerCnt][RowCnt][ColCnt])
-        {
-          case 0:
-          case 1:
-          case 2:
-          case FUNCTION_SW:
-            //PressedCheck.fill(OFF);
-            Kbd.releaseAll();
-            LayerCnt++;
-            break;
-          case FUNCTION_SW2:
-            //PressedCheck.fill(OFF);
-            Kbd.releaseAll();
-            LayerCnt++;
-            break;
-          case NULL_CON:
-            break;
-          case NEXT:
-            Kbd.press(KEY_MEDIA_NEXT_TRACK);
-            Kbd.releaseAll();
-            break;
-          case PREV:
-            Kbd.press(KEY_MEDIA_PREVIOUS_TRACK);
-            break;
-          case LED_B0:
-            pixels.setBrightness(0);
-            break;
-          case LED_B1:
-            pixels.setBrightness(5);
-            LED_DELAY = 500;
-            break;
-          case LED_B2:
-            LED_DELAY = 20;
-            pixels.setBrightness(40);
-            break;
-          case CHANGE_ID0:
-            // Change MAC Address to talk to different device
-            storeMacEEPROM(0);
-            break;
-          case CHANGE_ID1:
-            // Change MAC Address to talk to different device
-            storeMacEEPROM(1);
-            break;
-          case CHANGE_ID2:
-            // Change MAC Address to talk to different device
-            storeMacEEPROM(2);
-            break;
-          case CHANGE_ID3:
-            // Change MAC Address to talk to different device
-            storeMacEEPROM(3);
-            break;
-          case MIDI_MODE:
-            setMidiMode(true);
-            break;
-          case KEY_SS:
-            Kbd.press(KEY_LEFT_GUI);
-            Kbd.press(KEY_LEFT_SHIFT);
-            Kbd.press('5');
-            Kbd.releaseAll();
-
-          //if spacebar was tapped, reset counter.
-          case ' ':
-            spaceHit();
-            firstSpace = false;
-            Kbd.press( Layout[LayerCnt][RowCnt][ColCnt] );
-            break;
-          default:
-            firstSpace = true;
-            Kbd.press( Layout[LayerCnt][RowCnt][ColCnt] );
-        }
-        //Assign the current key as ON, so it doesn't constantly press the button
-        PressedCheck[LayerCnt][RowCnt][ColCnt] = ON;   
-        Serial.println( Layout[LayerCnt][RowCnt][ColCnt] );
-        //midi_ble.sendNoteOn(noteAddress, velocity);         // send a note on event
+  // Scan a complete matrix each loop; debounce time is measured per switch,
+  // not by slowing down MIDI processing or counting loop iterations.
+  for (int col = 0; col < ColCount; ++col) {
+    digitalWrite(Cols[col], HIGH);
+    delayMicroseconds(5);
+    const uint32_t now = millis();
+    for (int row = 0; row < RowCount; ++row) {
+      KeyInput::Event event;
+      if (keyInput.sample(row, col, digitalRead(Rows[row]) == HIGH, now,
+                          midiMode ? MIDIMap : Layout, event)) {
+        handleKeyEvent(event);
       }
-
-      //Otherwise, check if the switch was released
-      else if(digitalRead( Rows[RowCnt] ) == LOW && PressedCheck[LayerCnt][RowCnt][ColCnt] == ON)
-      {
-        //Switch based on the switch released
-        switch(Layout[LayerCnt][RowCnt][ColCnt])
-        {
-          //Nothing for the tactile switch
-          case 1:
-          case 2:
-          case 0:
-            break;
-          case 3:
-            Kbd.release(KEY_MEDIA_PLAY_PAUSE);
-            break;
-          case FUNCTION_SW:
-            PressedCheck[LayerCnt][RowCnt][ColCnt] = OFF;
-            if(LayerCnt > 0)
-            {
-              LayerCnt--;
-            }
-            Kbd.release(KEY_MEDIA_PLAY_PAUSE);            
-            Kbd.release(KEY_MEDIA_PREVIOUS_TRACK);
-            Kbd.release(KEY_MEDIA_NEXT_TRACK);
-            Kbd.releaseAll();
-            break;
-          case FUNCTION_SW2:
-            PressedCheck[LayerCnt][RowCnt][ColCnt] = OFF;
-            if(LayerCnt > 1)
-            {
-              LayerCnt--;
-            }
-            Kbd.releaseAll();
-            break;
-          case NULL_CON:
-            PressedCheck[LayerCnt][RowCnt][ColCnt] = OFF;
-            if(LayerCnt > 0)
-            {
-              LayerCnt--;
-            }
-            Kbd.release(KEY_MEDIA_PLAY_PAUSE);            
-            Kbd.release(KEY_MEDIA_PREVIOUS_TRACK);
-            Kbd.release(KEY_MEDIA_NEXT_TRACK);
-            Kbd.releaseAll();
-            break;
-          case NEXT:
-            Kbd.release(KEY_MEDIA_NEXT_TRACK);
-            break;
-          case PREV:
-            Kbd.release(KEY_MEDIA_PREVIOUS_TRACK);
-            break;
-          case MIDI_TOGGLE:
-            break;
-
-          //Release all other keys on the keyboard
-          default:
-            Kbd.release( Layout[LayerCnt][RowCnt][ColCnt] );
-          if(midiMode){
-            processMIDIRelease(MIDIMap[LayerCnt][RowCnt][ColCnt]);
-          }
-        }
-        //Let the keyboard know it's off, and to not constantly release keys that aren't released
-        PressedCheck[LayerCnt][RowCnt][ColCnt] = OFF;
-
-      }
-      //Increase row to scan
-      RowCnt++;
     }
-    //Reset back to original column to scan
-    digitalWrite(Cols[ColCnt],LOW);
-    //Increase column outputted
-    ColCnt++;
-    //Loop back to original column if out of the number of columns
-    if(ColCnt >= (ColCount))
-    {
-      ColCnt = 0;
-    }
+    digitalWrite(Cols[col], LOW);
   }
   
   //Delay so it's not too fast
