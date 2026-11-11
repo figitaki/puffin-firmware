@@ -17,6 +17,7 @@
 
 //#define CS_USE_NIMBLE
 #include <Seq.h>
+#include "MultiTrackSequencer.h"
 #include <Control_Surface.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 
@@ -39,18 +40,18 @@ bool bridgeBLEtoSER = true;
 bool serialOutput = false;
 
 bool activeNotes[12] = {false};
-bool liveNotes[128] = {};
+uint8_t liveChannels[128] = {}; // Capture press-time channel across track changes.
 
 Clock clk;
 
-void sendOwnedNote(uint8_t note, uint8_t velocity, bool on){
-  MIDIAddress address {note, Channel_1};
+void sendOwnedNote(uint8_t note, uint8_t velocity, bool on, uint8_t channel){
+  MIDIAddress address {note, Channel::createChannel(channel)};
   if(on) midi_out->sendNoteOn(address, velocity);
   else midi_out->sendNoteOff(address, velocity);
 }
 
 NoteOutput noteOutput(sendOwnedNote);
-Sequencer seq(noteOutput);
+MultiTrackSequencer seq(noteOutput);
 
 // Channel/SysEx traffic retains the existing bidirectional bridge. Only the
 // selected clock input may forward transport, preventing competing masters
@@ -117,7 +118,7 @@ void panicMIDI(){
   if(!midiMode) return; // The MIDI interfaces are not begun in typing mode.
   stopTransport(clk.running());
   noteOutput.panic();
-  for(auto &note : liveNotes) note = false;
+  for(auto &channel : liveChannels) channel = 0;
   for(auto &note : activeNotes) note = false;
   midi_out->sendNow();
   if(serialOutput) Serial0.flush();
@@ -153,15 +154,15 @@ bool bleMIDIConnected(){
 }
 
 void playNote(int note, int vel){
-  if(note < 0 || note > 127 || vel < 1 || vel > 127 || liveNotes[note]) return;
-  liveNotes[note] = true;
-  noteOutput.press(note, vel);
+  if(note < 0 || note > 127 || vel < 1 || vel > 127 || liveChannels[note]) return;
+  liveChannels[note] = seq.channel();
+  noteOutput.press(note, vel, liveChannels[note]);
 }
 
 void stopNote(int note){
-  if(note < 0 || note > 127 || !liveNotes[note]) return;
-  liveNotes[note] = false;
-  noteOutput.release(note);
+  if(note < 0 || note > 127 || !liveChannels[note]) return;
+  noteOutput.release(note, liveChannels[note]);
+  liveChannels[note] = 0;
 }
 
 // Process the correct midi function triggered from MIDIMap.h
@@ -176,7 +177,7 @@ void processMIDIPress(int function){
     int noteToPlay = function-241;
     activeNotes[noteToPlay%12] = true;
     playNote(noteToPlay, velocity);
-    if(seq.play){ seq.setStep(-1,noteToPlay,velocity); }
+    if(seq.playing()){ seq.setStep(-1,noteToPlay,velocity); }
   }
   switch (function){
     case SW_OUTPUT:
@@ -197,6 +198,22 @@ void processMIDIPress(int function){
     case CLOCK_SOURCE:
       stopTransport(true);
       clk.setSource(static_cast<Clock::Source>((clk.source() + 1) % 3));
+      break;
+    case TRACK_1:
+    case TRACK_2:
+    case TRACK_3:
+    case TRACK_4:
+      seq.selectTrack(function - TRACK_1);
+      break;
+    case TRACK_MUTE:
+      seq.setMuted(!seq.muted());
+      midi_out->sendNow();
+      break;
+    case TRACK_SHORTER:
+      if(seq.setLength(seq.length() - 1)) stopTransport(true);
+      break;
+    case TRACK_LONGER:
+      if(seq.setLength(seq.length() + 1)) stopTransport(true);
       break;
     case BPM_INC:
       clk.setBPM(currentBPM + 1, micros());

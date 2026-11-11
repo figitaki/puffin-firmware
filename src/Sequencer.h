@@ -5,10 +5,18 @@
 // Musical state only: no Arduino, display, MIDI interface, or key-function codes.
 class Sequencer {
 public:
-    explicit Sequencer(NoteOutput &output) : output(output) {}
+    explicit Sequencer(NoteOutput &output, uint8_t channel = 1)
+        : output(output), channel(channel) {}
 
     bool play = false;
     int s = 0; // Next step to play/edit, retained by Stop/Continue.
+    int getLength() const { return length; }
+    bool isMuted() const { return muted; }
+
+    void setMuted(bool value) {
+        if (value) releaseNote();
+        muted = value;
+    }
 
     bool setLength(int value) {
         if (value < 1 || value > Capacity) return false;
@@ -32,9 +40,9 @@ public:
         if (!play) return;
         releaseNote();
         const Step &note = notes[s];
-        if (note.velocity) {
+        if (note.velocity && !muted) {
             activeNote = note.note;
-            output.press(note.note, note.velocity);
+            output.press(note.note, note.velocity, channel);
         }
         s = (s + 1) % length;
     }
@@ -65,13 +73,15 @@ private:
     };
 
     NoteOutput &output;
+    uint8_t channel;
+    bool muted = false;
     Step notes[Capacity] = {};
     int length = Capacity;
     int activeNote = -1;
 
     void releaseNote() {
         if (activeNote < 0) return;
-        output.release(activeNote);
+        output.release(activeNote, channel);
         activeNote = -1;
     }
 };

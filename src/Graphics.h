@@ -199,9 +199,12 @@ void displayMIDI(){
   display.setCursor(108, 23);
   display.println(clk.source() == Clock::Internal ? "INT" :
                   clk.source() == Clock::BLE ? "BLE" : "TRS");
+  display.setCursor(80, 23);
+  display.println(String("T") + String(seq.selectedTrack() + 1) +
+                  (seq.muted() ? "M" : ""));
 
-  if(seq.s != 0){
-    if(seq.play){
+  if(seq.playing() || seq.nextStep() != 0){
+    if(seq.playing()){
       drawSymbol(22,15,MY_PLAY,WHITE,0,1);
     } else {
       drawSymbol(22,15,MY_STOP,WHITE,0,1);

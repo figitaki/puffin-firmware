@@ -7,7 +7,8 @@
 struct Event { int note, velocity; bool on; };
 std::vector<Event> events;
 
-void send(uint8_t note, uint8_t velocity, bool on) {
+void send(uint8_t note, uint8_t velocity, bool on, uint8_t channel) {
+    assert(channel == 1);
     events.push_back({note, velocity, on});
 }
 

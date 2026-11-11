@@ -78,8 +78,8 @@ implemented yet.
 Start releases the old sequencer note and arms step zero for the first clock;
 Stop releases it and retains the next position and pulse phase; Continue resumes
 from there. Incoming transport is accepted only from the selected clock input.
-Live playing and the sequence share note ownership on channel 1 of the selected
-output. The first owner supplies velocity; overlapping owners do not retrigger,
+Live playing and each sequence share note ownership on their track's channel of
+the selected output. The first owner supplies velocity; overlapping owners do not retrigger,
 and only the last release sends a physical note-off.
 
 Switching BLE/TRS output stops playback and releases all locally owned notes on
@@ -94,11 +94,43 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isr
 /tmp/puffin-sequencer-tests
 ```
 
-This is a single-track transport foundation, not the finished sequencer editor.
 The chord action remains a prototype. There is no independent gate scheduler,
-multi-track engine, or project storage.
+polyphonic step editor, or project storage.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
+
+## Four-track sequencing
+
+Four monophonic tracks run together on MIDI channels 1–4, sharing the clock and
+Start/Stop/Continue controls. Each has its own pattern, 1–96-step length (default
+96), next-step position, and mute state. Different lengths loop independently.
+Only track 1 contains the prototype's initial C note; the others start empty.
+
+In MIDI mode, hold Fn and use these typing-key positions:
+
+| Key position | Action |
+| --- | --- |
+| Q / W / E / R | Select track 1 / 2 / 3 / 4 |
+| T | Toggle selected track mute |
+| Y / U | Shorten / lengthen selected pattern by one step |
+
+The OLED shows `T1` through `T4`, with `M` appended when the selected track is
+muted. Live notes use the selected track's channel; releasing a key after a
+track change still releases its original channel. Recording while running and
+the existing clear action affect only the selected track's next step. Mute
+immediately releases that track's sequence-owned note, not a shared live owner,
+and keeps advancing its position. Unmute takes effect at the next step.
+
+Changing length stops the shared transport and resets only the edited track's
+next-step position to zero. Other tracks retain their positions; Continue
+resumes from those positions. Attempts beyond 1–96 do nothing, including leaving
+playback running. Shortening hides, rather than erases, steps beyond the new
+length. No settings or patterns survive restart yet. Typing-mode maps are unchanged.
+
+```sh
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests
+/tmp/puffin-multitrack-tests
+```
 
 ## Standalone transport and clock
 
