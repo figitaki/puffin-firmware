@@ -75,8 +75,9 @@ not key-function codes. Velocity zero is a rest. It retains the prototype's
 step, including at wraparound and after edits. Independent gate timing is not
 implemented yet.
 
-Incoming BLE MIDI Start releases the old sequencer note and starts at step zero;
-Stop releases it and retains the next position; Continue resumes from there.
+Start releases the old sequencer note and arms step zero for the first clock;
+Stop releases it and retains the next position and pulse phase; Continue resumes
+from there. Incoming transport is accepted only from the selected clock input.
 Live playing and the sequence share note ownership on channel 1 of the selected
 output. The first owner supplies velocity; overlapping owners do not retrigger,
 and only the last release sends a physical note-off.
@@ -93,11 +94,63 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isr
 /tmp/puffin-sequencer-tests
 ```
 
-This is not standalone sequencing yet: the prototype internal/external clock,
-per-pulse stepping, local transport bindings, and chord action still need work.
-There is no independent gate scheduler, multi-track engine, or project storage.
+This is a single-track transport foundation, not the finished sequencer editor.
+The chord action remains a prototype. There is no independent gate scheduler,
+multi-track engine, or project storage.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
+
+## Standalone transport and clock
+
+In MIDI mode, the six fitted top-row switches, left to right, now control:
+
+| Matrix position (zero-based) | Typing-mode key | MIDI action |
+| --- | --- | --- |
+| Row 0, column 3 | Esc | Start from step zero |
+| Row 0, column 4 | Screenshot | Stop |
+| Row 0, column 5 | 3 | Continue |
+| Row 0, column 6 | 4 | Internal tempo −1 BPM |
+| Row 0, column 7 | 5 | Internal tempo +1 BPM |
+| Row 0, column 8 | 6 | Cycle Internal → BLE → TRS clock input |
+
+Typing-mode bindings are unchanged. Fn+Esc retains the mode-switch/restart
+binding. The down-arrow position (row 4, column 10) still selects note output
+BLE/TRS independently of clock input. Source changes stop playback and reset
+pulse phase; Continue can resume the retained next step, or Start resets to zero.
+These settings/patterns are not persisted yet.
+
+Internal clock defaults to 120 BPM, supports 20–300 BPM, and emits 24 pulses per
+quarter note. Each sixteenth note advances every six clocks. Start/Continue send
+their MIDI transport message before the first internal clock; external transport
+waits for the selected input's next clock. Start resets step/pulse position;
+Continue preserves pulse phase and the next-step index, with the next clock due
+immediately in internal mode. Stop releases the sequence without cutting off a
+shared live-note owner.
+
+The clock accumulates integer microsecond fractions, preserving long-run tempo
+and tempo-change phase without millisecond rounding or integer division by zero.
+Unsigned timestamp differences handle normal `micros()` wrap. Two pending
+internal clocks are treated as a stall: stop/release instead of replaying a
+backlog. A playing external sequence also stops after 500 ms without a selected
+clock, including a late arrival after that gap. Restart/Continue is then required.
+These are fail-safe policies, not guarantees that BLE or the main loop can meet
+all deadlines on physical hardware.
+
+The upper-right clock indicator shows `INT`, `BLE`, or `TRS`, separately from the
+lowercase output-route label. External BPM is the last valid 24-interval arrival
+measurement (20–300 BPM), or `--` before one is available; BLE packet batching can
+affect it. Rendering no longer changes clock state. Channel/SysEx bridge traffic
+remains bidirectional, but only the selected external input forwards TimingClock,
+Start, Continue, and Stop to the other interface. Internal mode filters both
+incoming transport streams, avoiding an additional forwarded clock master.
+External transport is not echoed back to its input. Local controls send transport
+to the selected output even in external-clock mode; they do not generate clocks
+there. Avoid external software/hardware MIDI feedback loops.
+
+```sh
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Clock.cpp -o /tmp/puffin-clock-tests
+/tmp/puffin-clock-tests
+```
 
 ## Display scheduling
 

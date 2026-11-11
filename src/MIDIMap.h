@@ -4,7 +4,7 @@ int MIDIMap[NumLayers][RowCount][ColCount] =
 {
   //  Layer 0 TEST //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   {
-    {'-',       '-',        '-',        CLOCK_START,        '2',       '3',       '4',          '5',       '6',          '-',       '-',        '-'},
+    {'-',       '-',        '-',        CLOCK_START,        CLOCK_STOP, CLOCK_CONTINUE, BPM_DEC, BPM_INC, CLOCK_SOURCE, '-',       '-',        '-'},
     {'-',       'q',        'w',        'e',        'r',       't',       'y',          'u',       'i',          'o',       'p',        '-'},
     {'-',       PLAY_Gbl,   PLAY_Abl,   PLAY_Bbl,   'f',       PLAY_Db,    PLAY_Eb,     'j',        PLAY_Gb,     PLAY_Ab,   PLAY_Bb,    SEQ_CLEAR},
     {PLAY_Fl,   PLAY_Gl,    PLAY_Al,    PLAY_Bl,    PLAY_C,    PLAY_D,     PLAY_E,      PLAY_F,     PLAY_G,      PLAY_A,    PLAY_B,     PLAY_Ch},

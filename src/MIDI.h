@@ -25,8 +25,6 @@
 BluetoothMIDI_Interface midi_ble;
 // Instantiate a 5-pin DIN MIDI interface (on the TX and RX pins of Serial1)
 HardwareSerialMIDI_Interface midi_ser {Serial0, MIDI_BAUD};
-// Instantiate the pipe to connect the two interfaces
-BidirectionalMIDI_Pipe pipes;
 
 MIDI_Interface* midi_out = &midi_ble;
 
@@ -54,9 +52,70 @@ void sendOwnedNote(uint8_t note, uint8_t velocity, bool on){
 NoteOutput noteOutput(sendOwnedNote);
 Sequencer seq(noteOutput);
 
+// Channel/SysEx traffic retains the existing bidirectional bridge. Only the
+// selected clock input may forward transport, preventing competing masters
+// from leaking a second clock into the generated internal-clock output.
+class ClockInputPipe : public MIDI_Pipe {
+public:
+  explicit ClockInputPipe(Clock::Source source) : source(source) {}
+  void mapForwardMIDI(RealTimeMessage message) override {
+    switch(message.getMessageType()) {
+      case MIDIMessageType::TimingClock:
+      case MIDIMessageType::Start:
+      case MIDIMessageType::Continue:
+      case MIDIMessageType::Stop:
+        if(clk.source() != source) return;
+        break;
+      default: break;
+    }
+    sourceMIDItoSink(message);
+  }
+private:
+  Clock::Source source;
+};
+
+ClockInputPipe bleToSerial(Clock::BLE), serialToBle(Clock::TRS);
+
+void stopTransport(bool sendStop){
+  clk.stop();
+  seq.stop();
+  if(sendStop) {
+    midi_out->sendRealTime(MIDIMessageType::Stop);
+  }
+  midi_out->sendNow();
+}
+
+void startTransport(bool sendStart){
+  seq.reset();
+  seq.resume(); // Step zero sounds on the first clock, not on Start itself.
+  clk.start(micros());
+  if(sendStart) {
+    midi_out->sendRealTime(MIDIMessageType::Start);
+  }
+  midi_out->sendNow();
+}
+
+void continueTransport(bool sendContinue){
+  if(!clk.resume(micros())) return;
+  seq.resume();
+  if(sendContinue) {
+    midi_out->sendRealTime(MIDIMessageType::Continue);
+    midi_out->sendNow();
+  }
+}
+
+void updateSequencerClock(){
+  const Clock::Tick tick = clk.poll(micros());
+  if(tick == Clock::Overrun) { stopTransport(true); return; }
+  if(tick == Clock::None) return;
+  midi_out->sendRealTime(MIDIMessageType::TimingClock);
+  if(tick == Clock::Step) seq.step();
+  midi_out->sendNow();
+}
+
 void panicMIDI(){
   if(!midiMode) return; // The MIDI interfaces are not begun in typing mode.
-  seq.stop();
+  stopTransport(clk.running());
   noteOutput.panic();
   for(auto &note : liveNotes) note = false;
   for(auto &note : activeNotes) note = false;
@@ -109,7 +168,7 @@ void stopNote(int note){
 void processMIDIPress(int function){
 
   //Serial.println("MIDI FUNCTION: " + String(function));
-  int currentBPM = clk.getBPM();
+  int currentBPM = clk.internalBPM();
 
   // if function is between 300 and 320, play that respective note
   if(293 < function && function < 314){
@@ -127,15 +186,23 @@ void processMIDIPress(int function){
                               : static_cast<MIDI_Interface*>(&midi_ble);
       break;
     case CLOCK_START:
-      //implement clock start
+      startTransport(true);
       break;
     case CLOCK_STOP:
+      stopTransport(true);
+      break;
+    case CLOCK_CONTINUE:
+      continueTransport(true);
+      break;
+    case CLOCK_SOURCE:
+      stopTransport(true);
+      clk.setSource(static_cast<Clock::Source>((clk.source() + 1) % 3));
       break;
     case BPM_INC:
-      clk.setBPM(currentBPM + 1);
+      clk.setBPM(currentBPM + 1, micros());
       break;
     case BPM_DEC:
-      clk.setBPM(currentBPM - 1);
+      clk.setBPM(currentBPM - 1, micros());
       break;
     case MIDI_MODE:
       setMidiMode(false);
@@ -160,36 +227,6 @@ void processMIDIRelease(int function){
   }
 }
 
-int ticks = 0;
-int lastClock = 0;
-int currentClock = 0;
-uint16_t now = 0;
-
-void resetClock(){
-  ticks = 0;
-  lastClock = 0;
-  currentClock = 0;
-}
-
-void handleClockFunction() {
-  clk.ext = true;
-
-  if(ticks < 24){  // per the MIDI specification, there are 24 ticks for every quarter note
-      if(ticks == 0){
-          lastClock = now;
-      }
-      ticks++;
-  }
-  else{
-      ticks = 0;
-      currentClock = now;
-      if(lastClock > currentClock){ lastClock -= 8192; }
-      float temp = currentClock - lastClock;
-      float _BPM = 1001/temp*60;
-      clk.setBPM((int)_BPM);
-  }
-}
-
 // Custom MIDI callback that prints incoming messages.
 struct MyMIDI_Callbacks : MIDI_Callbacks {
  
@@ -202,25 +239,25 @@ struct MyMIDI_Callbacks : MIDI_Callbacks {
   }
 
   // Callback for real-time messages
-  void onRealTimeMessage(MIDI_Interface &, RealTimeMessage rt) override {
-    // Print the message
+  void onRealTimeMessage(MIDI_Interface &input, RealTimeMessage rt) override {
+    const Clock::Source source = &input == &midi_ble ? Clock::BLE : Clock::TRS;
+    if(clk.source() != source) return;
     switch(rt.getMessageType()){
       case MIDIMessageType::TimingClock:
-        // play next step in sequence
-        if(seq.play){ seq.step(); }
-        now = midi_ble.getTimestamp();
-        handleClockFunction();
+        switch(clk.externalPulse(micros())) {
+          case Clock::Step: seq.step(); break;
+          case Clock::Overrun: stopTransport(true); break;
+          default: break;
+        }
         break;
       case MIDIMessageType::Start:
-        seq.start();
-        resetClock();
+        startTransport(false); // The pipe already forwarded this transport.
         break;
       case MIDIMessageType::Continue:
-        seq.resume();
+        continueTransport(false);
         break;
       case MIDIMessageType::Stop:
-        seq.stop();
-        resetClock();
+        stopTransport(false);
         break;
     }
   }

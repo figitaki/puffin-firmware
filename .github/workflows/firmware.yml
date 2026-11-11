@@ -33,5 +33,7 @@ jobs:
           /tmp/puffin-sequencer-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/DisplayTransfer.cpp -o /tmp/puffin-display-tests
           /tmp/puffin-display-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Clock.cpp -o /tmp/puffin-clock-tests
+          /tmp/puffin-clock-tests
       - name: Build ProS3 firmware
         run: pio run --environment ProS3
