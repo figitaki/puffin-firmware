@@ -1,5 +1,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "DisplayTransfer.h"
 #include <SPI.h>
 #include <Wire.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
@@ -18,6 +19,7 @@
 #define OLED_RST_PIN -1      // Reset pin (-1 if not available)
 
 Adafruit_SSD1306 display(128, 32, &Wire, OLED_RST_PIN);
+DisplayTransfer displayTransfer;
 
 int frame = 0;
 
@@ -221,6 +223,8 @@ int reset = 1000;
 
 // Main Display Update
 void mainScreenUpdate() {
+  // Do not redraw a buffer that is still being sent to the OLED.
+  if(displayTransfer.busy()) return;
   if(cycle < reset) { cycle += 1; } else { cycle = 0; }
 
   // start refresh by clearing screen
@@ -243,7 +247,7 @@ void mainScreenUpdate() {
   // add bluetooth status icon
   displayBTStatus();
 
-  display.display();
+  displayTransfer.beginFrame();
   frame = (frame + 1) % FRAME_COUNT_PUFFIN;
   // delay(FRAME_DELAY);
 }

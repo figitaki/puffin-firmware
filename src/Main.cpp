@@ -260,6 +260,8 @@ void loop() {
   EVERY_N_MILLIS(100){
     mainScreenUpdate();
   }
+  // One short OLED transaction, then return to input/MIDI polling.
+  displayTransfer.update(Wire, SCREEN_I2C_ADDR, display.getBuffer());
 
   // Update MIDI clock and output pulse if needed
   //if (clockUpdate()) { midi_ser.sendRealTime(clock); };

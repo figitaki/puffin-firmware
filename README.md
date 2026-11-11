@@ -66,3 +66,26 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/KeyboardOutput.cpp -o 
 
 CI also runs these tests with address and undefined-behavior sanitizers. The
 debounce interval and GPIO settling delay still need confirmation on hardware.
+
+## Display scheduling
+
+The loop sends the 128 x 32 OLED framebuffer incrementally: one address command,
+then sixteen 32-byte data chunks, with input/MIDI polling between transactions.
+Each transaction uses 400 kHz I2C and restores the library's default 100 kHz bus
+clock afterward. Rendering waits until the preceding frame finishes, so bytes
+from two frames cannot be mixed. A failed transaction abandons the frame; the
+next refresh starts again with the address command. Drawing and pixel layout
+are unchanged. Boot-only display helpers still use the library's blocking API.
+
+This removes the loop's full-frame I2C stall, not every possible scan delay:
+bus timeouts, BLE calls, and other loop work can still block. Measure worst-case
+scan intervals and short-press capture on ProS3 hardware before claiming a
+maximum input latency or reliable capture of every press longer than 5 ms.
+
+CI checks complete framebuffer byte order, one-transaction updates, and bus-error
+recovery with a simulated bus. Run its native test with:
+
+```sh
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/DisplayTransfer.cpp -o /tmp/puffin-display-tests
+/tmp/puffin-display-tests
+```
