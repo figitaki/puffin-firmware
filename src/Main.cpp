@@ -164,7 +164,10 @@ void handleKeyEvent(const KeyInput::Event &event) {
     case CHANGE_ID1:
     case CHANGE_ID2:
     case CHANGE_ID3:
-      if (event.pressed) storeMacEEPROM(action - CHANGE_ID0);
+      if (event.pressed) {
+        panicMIDI();
+        storeMacEEPROM(action - CHANGE_ID0);
+      }
       return;
     case LED_B0:
       if (event.pressed) pixels.setBrightness(0);

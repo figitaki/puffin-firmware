@@ -192,7 +192,7 @@ void displayMIDI(int cycle){
     clk.ext = false;
   }
 
-  if (seq.serialOutput){
+  if (serialOutput){
     display.println("trs");
   } else {
     display.println("ble");

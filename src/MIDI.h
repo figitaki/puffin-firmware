@@ -38,16 +38,34 @@ const uint8_t velocity = 0x7F;
 
 bool midiMode;
 bool bridgeBLEtoSER = true;
+bool serialOutput = false;
 
 bool activeNotes[12] = {false};
+bool liveNotes[128] = {};
 
 Clock clk;
 
-Sequencer seq;
+void sendOwnedNote(uint8_t note, uint8_t velocity, bool on){
+  MIDIAddress address {note, Channel_1};
+  if(on) midi_out->sendNoteOn(address, velocity);
+  else midi_out->sendNoteOff(address, velocity);
+}
+
+NoteOutput noteOutput(sendOwnedNote);
+Sequencer seq(noteOutput);
+
+void panicMIDI(){
+  if(!midiMode) return; // The MIDI interfaces are not begun in typing mode.
+  seq.stop();
+  noteOutput.panic();
+  for(auto &note : liveNotes) note = false;
+  for(auto &note : activeNotes) note = false;
+  midi_out->sendNow();
+  if(serialOutput) Serial0.flush();
+}
 
 void setupSequencer(){
-  seq.setDevice(midi_out);
-  seq.setStep(0,PLAY_C,0x6F);
+  seq.setStep(0,60,0x6F);
 }
 
 void setupBleSerPipe(){
@@ -55,6 +73,7 @@ void setupBleSerPipe(){
 }
 
 void setMidiMode(bool on){
+  panicMIDI();
   EEPROM.begin(4);                                      //Begin EEPROM, allow us to store
   EEPROM.write(1,on);
   EEPROM.commit();
@@ -75,17 +94,15 @@ bool bleMIDIConnected(){
 }
 
 void playNote(int note, int vel){
-  MIDIAddress noteAddress {note, Channel_1};
-  //Serial.println("Playing note " + String(note));
-  seq.midi_out->sendNoteOn(noteAddress, vel);
+  if(note < 0 || note > 127 || vel < 1 || vel > 127 || liveNotes[note]) return;
+  liveNotes[note] = true;
+  noteOutput.press(note, vel);
 }
 
 void stopNote(int note){
-  MIDIAddress noteAddress {note, Channel_1};
-  // The velocity of the note events
-  const uint8_t velocity = 0x5F;
-  //Serial.println("Stopping note " + String(note));
-  seq.midi_out->sendNoteOff(noteAddress, velocity);
+  if(note < 0 || note > 127 || !liveNotes[note]) return;
+  liveNotes[note] = false;
+  noteOutput.release(note);
 }
 
 // Process the correct midi function triggered from MIDIMap.h
@@ -100,17 +117,14 @@ void processMIDIPress(int function){
     int noteToPlay = function-241;
     activeNotes[noteToPlay%12] = true;
     playNote(noteToPlay, velocity);
-    if(seq.play){ seq.setStep(-1,function,velocity); }
+    if(seq.play){ seq.setStep(-1,noteToPlay,velocity); }
   }
   switch (function){
     case SW_OUTPUT:
-      if(seq.serialOutput){
-        seq.switchOutput(&midi_ser);
-        midi_out = &midi_ser;
-      } else {
-        seq.switchOutput(&midi_ble);
-        midi_out = &midi_ble;
-      }
+      panicMIDI(); // Release on the old route before selecting the new one.
+      serialOutput = !serialOutput;
+      midi_out = serialOutput ? static_cast<MIDI_Interface*>(&midi_ser)
+                              : static_cast<MIDI_Interface*>(&midi_ble);
       break;
     case CLOCK_START:
       //implement clock start
@@ -202,12 +216,11 @@ struct MyMIDI_Callbacks : MIDI_Callbacks {
         resetClock();
         break;
       case MIDIMessageType::Continue:
-        seq.play = true;
+        seq.resume();
         break;
       case MIDIMessageType::Stop:
-        seq.play = false;
+        seq.stop();
         resetClock();
-        seq.reset();
         break;
     }
   }

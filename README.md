@@ -62,3 +62,35 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/KeyboardOutput.cpp -o 
 
 CI also runs these tests with address and undefined-behavior sanitizers. The
 debounce interval and GPIO settling delay still need confirmation on hardware.
+
+## Sequencer note safety (foundation)
+
+The single-track model stores musical note numbers 0–127 and per-step velocities,
+not key-function codes. Velocity zero is a rest. It retains the prototype's
+96-step capacity and releases the explicitly tracked sounding note at the next
+step, including at wraparound and after edits. Independent gate timing is not
+implemented yet.
+
+Incoming BLE MIDI Start releases the old sequencer note and starts at step zero;
+Stop releases it and retains the next position; Continue resumes from there.
+Live playing and the sequence share note ownership on channel 1 of the selected
+output. The first owner supplies velocity; overlapping owners do not retrigger,
+and only the last release sends a physical note-off.
+
+Switching BLE/TRS output stops playback and releases all locally owned notes on
+the old route before selecting the new one. The first output toggle now selects
+TRS, matching its indicator. Still-held performance keys must be released and
+pressed again on the new route. Mode/device restarts attempt the same cleanup
+and flush buffered output first. Delivery to a disconnected receiver cannot be
+guaranteed. Forwarded MIDI-thru notes are not locally owned.
+
+```sh
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Sequencer.cpp -o /tmp/puffin-sequencer-tests
+/tmp/puffin-sequencer-tests
+```
+
+This is not standalone sequencing yet: the prototype internal/external clock,
+per-pulse stepping, local transport bindings, and chord action still need work.
+There is no independent gate scheduler, multi-track engine, or project storage.
+BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
+validation on the board; host tests establish state/message behavior only.
