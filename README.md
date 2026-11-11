@@ -67,6 +67,34 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -Isrc test/KeyboardOutput.cpp -o 
 CI also runs these tests with address and undefined-behavior sanitizers. The
 debounce interval and GPIO settling delay still need confirmation on hardware.
 
+## Alternative typing layouts
+
+QWERTY is the default. In typing mode, hold Fn, then GUI, and press the physical
+Q, W, or E position to choose QWERTY, standard Colemak (not Colemak-DH), or Dvorak,
+respectively. These shortcuts are position-based even after changing layouts.
+They replace the redundant left-side 1/2/3 bindings in the number-pad layer;
+the right-side number pad and the normal Fn number row remain available.
+
+The preset changes only the base layer's 30 letter/punctuation positions.
+Modifiers, space, arrows, Tab/Return/Backspace, top-row shortcuts, and the Fn
+symbol layer stay in place. The up-arrow position interrupts Puffin's bottom
+typing row; Dvorak's Z uses the far-right slash position, not the arrow. Dvorak's
+slash remains accessible at Fn+up-arrow. Held keys retain their original
+press-time actions across a layout change; new presses use the new layout.
+MIDI maps and controls are not changed.
+
+Selection is stored with ESP32 Preferences in the separate `puffin-keys` NVS
+namespace under `layout`, without modifying the existing mode/device EEPROM.
+Only a changed selection is written. Missing, invalid, or unreadable stored
+selection defaults to QWERTY. A failed save keeps the new layout for the current
+session and reports the failure over serial. No restart or re-pair is required
+to change the layout; physical reboot persistence still needs board validation.
+
+These presets emit US-layout HID positions through the existing ASCII mapping.
+Use a US/QWERTY input source on the host, not a second Colemak/Dvorak remap.
+This is built-in preset selection, not arbitrary per-key remapping or a desktop
+configuration tool; those remain future work.
+
 ## Sequencer note safety (foundation)
 
 The single-track model stores musical note numbers 0–127 and per-step velocities,
