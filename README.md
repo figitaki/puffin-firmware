@@ -42,8 +42,12 @@ until GUI is released, even if Fn is released first. Ordinary GUI presses in the
 base layer still behave as GUI. In MIDI mode, Fn selects the MIDI function map;
 musical actions do not also send typing reports. Mode and device changes retain
 their existing restart behavior.
-The screenshot shortcut releases only keys/modifiers it added, rather than
-clearing unrelated held keys or overlapping Shift, GUI, or `5` owners.
+The screenshot shortcut temporarily releases the `5` usage if `5` or `%` is
+already held, so the host sees a fresh shortcut key-down. It then restores the
+physical report without changing any held-key ownership. Unrelated keys and
+modifiers stay held throughout. If all six report slots are occupied by other
+keys (or the keyboard is in rollover), the shortcut is skipped rather than
+evicting another key.
 Typing reports track owners of translated HID usages and modifier bits, so
 distinct actions such as `9` and `(` can share a key, and releasing a shifted
 character does not clear a still-held physical Shift. Translation reuses the

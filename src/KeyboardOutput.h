@@ -30,6 +30,36 @@ public:
         }
     }
 
+    // Emit a chord without changing physical owners. A held tap usage must
+    // first go up so the host sees a fresh key-down with the chord modifiers.
+    // With all six slots occupied by other keys (or rollover), skip the tap
+    // rather than releasing an unrelated key to make room.
+    template<class Send>
+    bool tapUsage(uint8_t usage, uint8_t modifiers, Send send) const {
+        uint8_t heldModifiers;
+        uint8_t held[6];
+        report(heldModifiers, held);
+        uint8_t chord[6];
+        int slot = -1;
+        for (int i = 0; i < 6; ++i) {
+            chord[i] = held[i];
+            if (held[i] == usage) slot = i;
+        }
+        if (slot >= 0) {
+            chord[slot] = 0;
+            send(heldModifiers, chord);
+        } else {
+            for (int i = 0; i < 6; ++i) {
+                if (!held[i]) { slot = i; break; }
+            }
+        }
+        if (slot < 0) return false;
+        chord[slot] = usage;
+        send(uint8_t(heldModifiers | modifiers), chord);
+        send(heldModifiers, held);
+        return true;
+    }
+
 private:
     const uint8_t *asciiMap;
     uint8_t usageOwners[128] = {};

@@ -200,14 +200,14 @@ void handleKeyEvent(const KeyInput::Event &event) {
       break;
     case KEY_SS:
       if (event.pressed) {
-        keyboardOutput.press(KEY_LEFT_GUI);
-        keyboardOutput.press(KEY_LEFT_SHIFT);
-        keyboardOutput.press('5');
-        sendTypingReport();
-        keyboardOutput.release('5');
-        keyboardOutput.release(KEY_LEFT_SHIFT);
-        keyboardOutput.release(KEY_LEFT_GUI);
-        sendTypingReport();
+        // GUI + left Shift + 5; preserve the physical report after the tap.
+        keyboardOutput.tapUsage(_asciimap['5'] & 0x7F, 0x0A,
+          [](uint8_t modifiers, const uint8_t (&keys)[6]) {
+            KeyReport report = {};
+            report.modifiers = modifiers;
+            for (int i = 0; i < 6; ++i) report.keys[i] = keys[i];
+            Kbd.sendReport(&report);
+          });
       }
       break;
     default:
