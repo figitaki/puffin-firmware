@@ -185,6 +185,28 @@ void updatePiano(bool active[12]){
   }
 }
 
+void displayFirmwareUpdate(const char *pin, const uint8_t status[12]) {
+  display.clearDisplay();
+  display.setFont(&Font5x7FixedMono);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 8);
+  display.print(String("UPDATE PIN ") + pin);
+  display.setCursor(0, 19);
+  if(status[1] == FirmwareUpdate::Receiving) {
+    const uint32_t written = FirmwareUpdate::read32(status + 4);
+    const uint32_t total = FirmwareUpdate::read32(status + 8);
+    display.print(String(written / 1024) + "/" + String(total / 1024) + " KB");
+    if(total) display.fillRect(0, 21, uint64_t(written) * 128 / total, 2, SSD1306_WHITE);
+  } else if(status[1] == FirmwareUpdate::Complete) display.print("VERIFIED / RESTARTING");
+  else if(status[1] == FirmwareUpdate::Error) display.print(String("ERROR ") + String(status[2]) + " / RESET");
+  else if(status[1] == FirmwareUpdate::Authorized) display.print("PIN OK / READY");
+  else display.print("READY / OPEN IOS APP");
+  display.setCursor(0, 31);
+  display.print("DEV: TRUSTED BIN ONLY");
+  display.display();
+}
+
 void displayStepEditor(){
   display.setFont(&Font5x7FixedMono);
   display.setTextSize(1);

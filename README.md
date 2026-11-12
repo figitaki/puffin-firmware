@@ -23,6 +23,28 @@ GitHub Actions builds the ProS3 target on pushes and pull requests. A successful
 build checks compilation and linking, not electrical behavior, BLE pairing,
 matrix scanning, or MIDI timing; those still need testing on the actual board.
 
+## Development Bluetooth firmware updater
+
+The native [iPhone/iPad updater](ios/PuffinUpdater/README.md) provides a consumer
+flow for official HTTPS updates and transfers them over BLE. Its release-server
+URL still needs configuring; local `firmware.bin` import is in the options menu. Install
+updater-capable firmware **once by USB** first; the app cannot add this service
+to older firmware or provision an OTA partition table. Keep USB recovery available.
+
+Hold physical **Fn + Up during reset/power-on** to enter exclusive maintenance
+mode. Its OLED shows a fresh six-digit PIN; keyboard and MIDI services do not
+start. Reset without those keys to exit. New sessions are accepted for five
+minutes, five incorrect PINs lock the session until reset, and an active transfer
+aborts after 30 seconds without progress. Interrupted transfers restart from zero.
+
+The inactive OTA slot is selected for boot only after SHA-256 and ESP image
+validation. This is a **development prototype**, not a secure release system:
+PIN + SHA-256 do not authenticate a publisher, and firmware signatures, secure
+boot, and automatic post-boot rollback are not implemented. A valid but broken
+application may still require USB recovery. Transfer completion does not confirm
+that the new firmware booted. See the [wire protocol](docs/ble-update-protocol.md)
+and app README for setup, limits, and the physical-device test checklist.
+
 ## Key input and layers
 
 Each fitted switch is debounced for 5 ms, independently of loop speed and the

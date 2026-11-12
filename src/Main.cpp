@@ -13,6 +13,7 @@
 #include <BLESecurity.h>
 #include <EEPROM.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
+#include "BleFirmwareUpdater.h"
 #include "Graphics.h"
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
@@ -35,11 +36,23 @@ TypingLayout typingLayout(Layout);
 KeymapConsole keymapConsole(typingLayout);
 Preferences typingPreferences;
 bool typingPreferencesReady = false;
+BleFirmwareUpdater firmwareUpdater;
+bool updaterActive = false;
+
+bool updateKeysHeld() {
+  digitalWrite(Cols[8], HIGH);
+  delayMicroseconds(10);
+  const bool fn = digitalRead(Rows[4]);
+  digitalWrite(Cols[8], LOW);
+  digitalWrite(Cols[10], HIGH);
+  delayMicroseconds(10);
+  const bool up = digitalRead(Rows[3]);
+  digitalWrite(Cols[10], LOW);
+  return fn && up;
+}
 
 //Setup, onces once on boot
 void setup() {
-
-  readMacEEPROM(readMIDIModeEEPROM());
   
   Wire.begin();
   boardStart();
@@ -54,7 +67,6 @@ void setup() {
   display.setRotation(2);
   //startupAnimation();
   display.clearDisplay();
-  mainScreenUpdate();
   Kbd.setBatteryLevel(updateBattLevel());
 
   // Keyboard Matrix Setup
@@ -69,6 +81,19 @@ void setup() {
   {
     pinMode(Rows[i],INPUT_PULLDOWN);
   }
+
+  // Maintenance has a separate BLE identity and never starts HID/MIDI. It
+  // also bypasses stored device IDs so USB recovery is not needed to enter it.
+  if(updateKeysHeld()) {
+    delay(20);
+    updaterActive = updateKeysHeld();
+  }
+  if(updaterActive) {
+    firmwareUpdater.begin();
+    return;
+  }
+  readMacEEPROM(readMIDIModeEEPROM());
+  mainScreenUpdate();
 
   // Initalize LEDS
   if (ledEnabled){
@@ -304,6 +329,18 @@ void handleKeyEvent(const KeyInput::Event &event) {
 
 //Loops to iterate through all functions
 void loop() {
+  if(updaterActive) {
+    firmwareUpdater.poll();
+    static uint32_t drawnAt = 0;
+    if(uint32_t(millis() - drawnAt) >= 200) {
+      uint8_t status[12];
+      firmwareUpdater.status(status);
+      displayFirmwareUpdate(firmwareUpdater.code(), status);
+      drawnAt = millis();
+    }
+    delay(5);
+    return;
+  }
 
   //onboardLED(color);
 
