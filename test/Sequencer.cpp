@@ -97,14 +97,16 @@ void liveAndSequencedNotesShareOwnership() {
 void boundedPatternsAndPanic() {
     NoteOutput output(send);
     Sequencer seq(output);
-    assert(!seq.setLength(0) && !seq.setLength(97));
-    assert(!seq.setStep(-2, 60, 90) && !seq.setStep(96, 60, 90));
+    assert(seq.getLength() == 16);
+    assert(!seq.setLength(0) && !seq.setLength(65));
+    assert(seq.setLength(64));
+    assert(!seq.setStep(-2, 60, 90) && !seq.setStep(64, 60, 90));
     assert(!seq.setStep(0, -1, 90) && !seq.setStep(0, 128, 90));
     assert(!seq.setStep(0, 60, -1) && !seq.setStep(0, 60, 128));
     assert(seq.setStep(0, 60, 0)); // Velocity zero is a rest, not note-on zero.
-    assert(seq.setStep(95, 127, 127));
+    assert(seq.setStep(63, 127, 127));
     seq.start();
-    for (int i = 1; i < 96; ++i) seq.step();
+    for (int i = 1; i < 64; ++i) seq.step();
     assert(seq.s == 0);
     assert(seq.setLength(1)); // Resizing stops and releases the active note.
     expect({{127, 127, true}, {127, 0, false}});

@@ -75,7 +75,7 @@ void mutePreservesPhaseAndLiveOwner() {
     expect({}); // Unmute waits for the next step rather than retriggering now.
     seq.step();
     expect({{1,62,82,true},{2,65,0,false},{2,60,90,true}});
-    assert(!seq.setLength(0) && !seq.setLength(97) && seq.playing());
+    assert(!seq.setLength(0) && !seq.setLength(65) && seq.playing());
     seq.selectTrack(1);
     assert(seq.setLength(1)); // Valid resize stops every track.
     expect({{2,60,0,false},{1,62,0,false}});
@@ -124,20 +124,21 @@ void readsRespectActiveLength() {
     NoteOutput output(send);
     Sequencer seq(output);
     expectStep(seq, 0, 0, 0);
-    assert(seq.setStep(95, 127, 127));
-    expectStep(seq, 95, 127, 127);
+    assert(seq.setLength(64));
+    assert(seq.setStep(63, 127, 127));
+    expectStep(seq, 63, 127, 127);
     expectUnreadableStep(seq, -1); // Unlike setStep, reads have no sentinel.
     expectUnreadableStep(seq, -2);
-    expectUnreadableStep(seq, 96);
+    expectUnreadableStep(seq, 64);
     assert(seq.setLength(2));
     assert(seq.setStep(0, 0, 7));
     assert(seq.setStep(1, 60, 0));
     expectStep(seq, 0, 0, 7); // MIDI note zero is not a rest by itself.
     expectStep(seq, 1, 60, 0); // Rest reads retain the stored pitch.
     expectUnreadableStep(seq, 2);
-    expectUnreadableStep(seq, 95); // Stored but outside the active length.
-    assert(seq.setLength(96));
-    expectStep(seq, 95, 127, 127);
+    expectUnreadableStep(seq, 63); // Stored but outside the active length.
+    assert(seq.setLength(64));
+    expectStep(seq, 63, 127, 127);
     expect({});
 }
 
@@ -145,8 +146,8 @@ void independentEditCursorsAndResize() {
     NoteOutput output(send);
     MultiTrackSequencer seq(output);
     const MultiTrackSequencer &view = seq;
-    const int lengths[] = {5, 3, 96, 1};
-    const int cursors[] = {3, 1, 95, 0};
+    const int lengths[] = {5, 3, 64, 1};
+    const int cursors[] = {3, 1, 63, 0};
     for (int track = 0; track < 4; ++track) {
         assert(seq.selectTrack(track));
         assert(view.editStep() == 0);
@@ -154,7 +155,7 @@ void independentEditCursorsAndResize() {
         assert(seq.selectStep(cursors[track]));
         assert(seq.setStep(seq.editStep(), 60 + track, 90 + track));
         assert(!seq.selectStep(-1) && !seq.selectStep(lengths[track]));
-        assert(!seq.selectStep(96));
+        assert(!seq.selectStep(64));
         assert(view.editStep() == cursors[track] && seq.nextStep() == 0);
         expectUnreadableStep(view, -1);
         expectUnreadableStep(view, lengths[track]);
@@ -173,7 +174,7 @@ void independentEditCursorsAndResize() {
     assert(!seq.selectTrack(-1) && !seq.selectTrack(4));
     assert(seq.selectedTrack() == 3 && seq.editStep() == 0);
     seq.selectTrack(0);
-    assert(!seq.setLength(0) && !seq.setLength(97));
+    assert(!seq.setLength(0) && !seq.setLength(65));
     assert(seq.playing() && seq.editStep() == 3 && seq.nextStep() == 2);
     assert(seq.setLength(2)); // Shrink clamps just this cursor and stops all tracks.
     expect({{2,61,0,false},{4,63,0,false}});
@@ -242,6 +243,52 @@ void runningEditsPreservePlaybackAndReleases() {
     expect({{1,62,0,false}});
 }
 
+void pagesAndSelectedEnd() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    for (int track = 0; track < 4; ++track) {
+        seq.selectTrack(track);
+        assert(seq.length() == 16 && seq.pageCount() == 1 && seq.editPage() == 0);
+    }
+    seq.selectTrack(0);
+    assert(seq.setPages(4) && seq.length() == 64 && seq.pageCount() == 4);
+    assert(seq.selectStep(14));
+    assert(seq.selectPage(3) && seq.editStep() == 62 && seq.editPage() == 3);
+    assert(seq.setStep(62, 79, 83));
+    assert(!seq.selectPage(-1) && !seq.selectPage(4) && seq.editStep() == 62);
+    // Select step 19 and make it the inclusive end of the pattern.
+    assert(seq.selectStep(18));
+    assert(seq.setLength(seq.editStep() + 1));
+    assert(seq.length() == 19 && seq.pageCount() == 2 && seq.editStep() == 18);
+    assert(seq.selectPage(0) && seq.editStep() == 2);
+    assert(seq.selectStep(15));
+    assert(seq.selectPage(1) && seq.editStep() == 18); // Partial-page clamp.
+    assert(seq.setStep(18, 71, 87));
+    seq.resume();
+    assert(!seq.setPages(0) && !seq.setPages(5) && seq.playing());
+    for (int step = 0; step < 19; ++step) seq.step();
+    assert(seq.nextStep() == 0);
+    expect({{1,71,87,true}});
+    assert(seq.setPages(1)); // Releases the sounding end note and clamps cursor.
+    expect({{1,71,0,false}});
+    assert(!seq.playing() && seq.length() == 16 && seq.editStep() == 15);
+    assert(seq.setPages(2) && seq.length() == 32);
+    expectStep(seq, 18, 71, 87); // Length changes do not erase hidden notes.
+    assert(seq.setPages(3) && seq.length() == 48);
+    assert(seq.setPages(4) && seq.length() == 64);
+    expectStep(seq, 62, 79, 83);
+    seq.resume();
+    assert(!seq.setPages(4) && seq.playing()); // Re-selecting size is a no-op.
+    seq.stop();
+    seq.selectTrack(1);
+    assert(seq.length() == 16 && seq.editStep() == 0);
+    assert(seq.setLength(seq.editStep() + 1)); // A one-step loop is valid.
+    assert(seq.length() == 1 && seq.pageCount() == 1);
+    seq.selectTrack(0);
+    assert(seq.length() == 64 && seq.editStep() == 15);
+    expect({});
+}
+
 int main() {
     independentLengthsAndChannels();
     mutePreservesPhaseAndLiveOwner();
@@ -249,5 +296,6 @@ int main() {
     readsRespectActiveLength();
     independentEditCursorsAndResize();
     runningEditsPreservePlaybackAndReleases();
+    pagesAndSelectedEnd();
     puts("Multi-track sequencer regression tests passed");
 }

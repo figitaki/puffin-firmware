@@ -5,6 +5,10 @@
 // Musical state only: no Arduino, display, MIDI interface, or key-function codes.
 class Sequencer {
 public:
+    static const int StepsPerPage = 16;
+    static const int MaxPages = 4;
+    static const int Capacity = StepsPerPage * MaxPages;
+
     explicit Sequencer(NoteOutput &output, uint8_t channel = 1)
         : output(output), channel(channel) {}
 
@@ -73,7 +77,6 @@ public:
     void resume() { play = true; }
 
 private:
-    static const int Capacity = 96;
     struct Step {
         uint8_t note;
         uint8_t velocity; // Zero is a rest; MIDI note zero is still playable.
@@ -83,7 +86,7 @@ private:
     uint8_t channel;
     bool muted = false;
     Step notes[Capacity] = {};
-    int length = Capacity;
+    int length = StepsPerPage;
     int activeNote = -1;
 
     void releaseNote() {

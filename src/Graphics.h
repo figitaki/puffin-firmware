@@ -190,19 +190,20 @@ void displayStepEditor(){
   display.setTextSize(1);
   display.setCursor(24, 8);
   display.print(String("T") + String(seq.selectedTrack() + 1) +
-                (seq.muted() ? "M" : " ") + " E" + String(seq.editStep() + 1) +
+                (seq.muted() ? "M" : " ") + String(seq.editPage() + 1) + "/" + String(seq.pageCount()) +
                 (seq.playing() ? " >" : " -"));
   uint8_t note = 0, velocity = 0;
   seq.getStep(seq.editStep(), note, velocity);
   display.setCursor(24, 19);
-  display.print(velocity ? String("N") + String(note) + " V" + String(velocity) : String("REST"));
-  display.setCursor(84, 19);
+  display.print(String(seq.editStep() + 1) + "/" + String(seq.length()) + " " +
+                (velocity ? String("N") + String(note) : String("REST")));
+  display.setCursor(88, 19);
   display.print(clk.getBPM() ? String(clk.getBPM()) : String("--"));
   display.setCursor(108, 19);
   display.print(clk.source() == Clock::Internal ? "INT" : clk.source() == Clock::BLE ? "BLE" : "TRS");
 
-  const int first = (seq.editStep() / 16) * 16;
-  for(int index = first; index < first + 16 && index < seq.length(); ++index) {
+  const int first = seq.editPage() * Sequencer::StepsPerPage;
+  for(int index = first; index < first + Sequencer::StepsPerPage && index < seq.length(); ++index) {
     const int x = 24 + (index - first) * 6;
     seq.getStep(index, note, velocity);
     if(velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
