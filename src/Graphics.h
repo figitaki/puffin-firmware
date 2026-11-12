@@ -185,6 +185,34 @@ void updatePiano(bool active[12]){
   }
 }
 
+void displayStepEditor(){
+  display.setFont(&Font5x7FixedMono);
+  display.setTextSize(1);
+  display.setCursor(24, 8);
+  display.print(String("T") + String(seq.selectedTrack() + 1) +
+                (seq.muted() ? "M" : " ") + " E" + String(seq.editStep() + 1) +
+                (seq.playing() ? " >" : " -"));
+  uint8_t note = 0, velocity = 0;
+  seq.getStep(seq.editStep(), note, velocity);
+  display.setCursor(24, 19);
+  display.print(velocity ? String("N") + String(note) + " V" + String(velocity) : String("REST"));
+  display.setCursor(84, 19);
+  display.print(clk.getBPM() ? String(clk.getBPM()) : String("--"));
+  display.setCursor(108, 19);
+  display.print(clk.source() == Clock::Internal ? "INT" : clk.source() == Clock::BLE ? "BLE" : "TRS");
+
+  const int first = (seq.editStep() / 16) * 16;
+  for(int index = first; index < first + 16 && index < seq.length(); ++index) {
+    const int x = 24 + (index - first) * 6;
+    seq.getStep(index, note, velocity);
+    if(velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
+    else display.drawPixel(x + 2, 29, SSD1306_WHITE);
+    if(index == seq.editStep()) display.drawRect(x, 24, 6, 7, SSD1306_WHITE);
+    // The tick marks the next playback step, not the independently selected edit step.
+    if(seq.playing() && index == seq.nextStep()) display.drawFastVLine(x + 2, 22, 2, SSD1306_WHITE);
+  }
+}
+
 void displayMIDI(){
   display.setFont(&FreeMono9pt7b);
   display.setTextSize(1);
@@ -228,8 +256,11 @@ void mainScreenUpdate() {
 
 
   if(midiMode){
-    displayMIDI();
-    displayBPM();
+    if(stepEditing) displayStepEditor();
+    else {
+      displayMIDI();
+      displayBPM();
+    }
   } else { // if kb mode, display wpm and puffin guy
     // display current wpm
     displayWPM();

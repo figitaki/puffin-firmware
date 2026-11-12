@@ -202,6 +202,39 @@ resumes from those positions. Attempts beyond 1–96 do nothing, including leavi
 playback running. Shortening hides, rather than erases, steps beyond the new
 length. No settings or patterns survive restart yet. Typing-mode maps are unchanged.
 
+### Onboard step editor
+
+In MIDI mode, Fn+I toggles between the performance view and the step editor.
+These are physical key positions, independent of the typing preset or remaps.
+
+| Key position | Editor action |
+| --- | --- |
+| Left / Right | Previous / next step, wrapping within the selected track |
+| Fn+O / Fn+P | Previous / next 16-step page, wrapping between pages |
+| Note keys | Audition and write the selected step at velocity 95 |
+| Return | Clear the selected step to a rest |
+
+Each track remembers its own edit position. The cursor does not advance when
+entering notes or during playback; edits work while stopped or running without
+moving the playback position. Page changes preserve the offset within the page,
+clamping to the last step on a partial final page. For example, in a 17-step
+pattern, paging forward from step 16 selects step 17; paging forward again
+selects step 1. Shortening a pattern clamps its edit cursor if necessary.
+
+The OLED shows track/mute, `E` followed by the 1-based edit step, and `>` for
+running or `-` for stopped. The second line shows the selected note and velocity
+or `REST`, BPM, and clock source. The 16-step strip shows filled notes, rest
+dots, an outlined edit cursor, and a separate tick for the **next playback
+step** when it is on the current page. That tick is not a sounding-note marker.
+Battery, charging, and Bluetooth indicators remain visible.
+
+Fn+Q/W/E/R, Fn+T, Fn+Y/U, transport, and Down (output route) retain their
+existing functions. Outside the editor, note keys only record while running
+and Return still clears the next playback step. Editing is monophonic and
+volatile: there is no velocity/gate editor, undo, or pattern persistence yet.
+Host tests and software OLED renders do not replace checking the physical
+controls, display, and received MIDI on a board.
+
 ```sh
 g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests
 /tmp/puffin-multitrack-tests

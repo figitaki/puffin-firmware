@@ -106,3 +106,8 @@
 #define LAYOUT_QWERTY   350
 #define LAYOUT_COLEMAK  351
 #define LAYOUT_DVORAK   352
+#define EDIT_TOGGLE    360
+#define EDIT_PREVIOUS  361
+#define EDIT_NEXT      362
+#define EDIT_PAGE_BACK 363
+#define EDIT_PAGE_NEXT 364

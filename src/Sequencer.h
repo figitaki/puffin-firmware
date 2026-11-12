@@ -34,6 +34,13 @@ public:
         return true;
     }
 
+    bool getStep(int index, uint8_t &note, uint8_t &velocity) const {
+        if (index < 0 || index >= length) return false;
+        note = notes[index].note;
+        velocity = notes[index].velocity;
+        return true;
+    }
+
     void clear() { notes[s] = {}; }
 
     void step() {

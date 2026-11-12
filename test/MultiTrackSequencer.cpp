@@ -106,9 +106,148 @@ void ownershipIsScopedToChannelAndPitch() {
     expect({{16,127,126,true},{1,0,0,false},{16,127,0,false}});
 }
 
+template <typename Pattern>
+void expectStep(const Pattern &seq, int index, int note, int velocity) {
+    uint8_t actualNote = 19, actualVelocity = 23;
+    assert(seq.getStep(index, actualNote, actualVelocity));
+    assert(actualNote == note && actualVelocity == velocity);
+}
+
+template <typename Pattern>
+void expectUnreadableStep(const Pattern &seq, int index) {
+    uint8_t note = 19, velocity = 23;
+    assert(!seq.getStep(index, note, velocity));
+    assert(note == 19 && velocity == 23);
+}
+
+void readsRespectActiveLength() {
+    NoteOutput output(send);
+    Sequencer seq(output);
+    expectStep(seq, 0, 0, 0);
+    assert(seq.setStep(95, 127, 127));
+    expectStep(seq, 95, 127, 127);
+    expectUnreadableStep(seq, -1); // Unlike setStep, reads have no sentinel.
+    expectUnreadableStep(seq, -2);
+    expectUnreadableStep(seq, 96);
+    assert(seq.setLength(2));
+    assert(seq.setStep(0, 0, 7));
+    assert(seq.setStep(1, 60, 0));
+    expectStep(seq, 0, 0, 7); // MIDI note zero is not a rest by itself.
+    expectStep(seq, 1, 60, 0); // Rest reads retain the stored pitch.
+    expectUnreadableStep(seq, 2);
+    expectUnreadableStep(seq, 95); // Stored but outside the active length.
+    assert(seq.setLength(96));
+    expectStep(seq, 95, 127, 127);
+    expect({});
+}
+
+void independentEditCursorsAndResize() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    const MultiTrackSequencer &view = seq;
+    const int lengths[] = {5, 3, 96, 1};
+    const int cursors[] = {3, 1, 95, 0};
+    for (int track = 0; track < 4; ++track) {
+        assert(seq.selectTrack(track));
+        assert(view.editStep() == 0);
+        assert(seq.setLength(lengths[track]));
+        assert(seq.selectStep(cursors[track]));
+        assert(seq.setStep(seq.editStep(), 60 + track, 90 + track));
+        assert(!seq.selectStep(-1) && !seq.selectStep(lengths[track]));
+        assert(!seq.selectStep(96));
+        assert(view.editStep() == cursors[track] && seq.nextStep() == 0);
+        expectUnreadableStep(view, -1);
+        expectUnreadableStep(view, lengths[track]);
+        if (cursors[track] != 0) expectStep(view, 0, 0, 0);
+    }
+    seq.resume();
+    seq.step(); seq.step();
+    expect({{4,63,93,true},{2,61,91,true},{4,63,0,false},{4,63,93,true}});
+    const int positions[] = {2, 2, 2, 0};
+    for (int track = 0; track < 4; ++track) {
+        assert(seq.selectTrack(track));
+        assert(view.editStep() == cursors[track]);
+        assert(seq.nextStep() == positions[track]);
+        expectStep(view, cursors[track], 60 + track, 90 + track);
+    }
+    assert(!seq.selectTrack(-1) && !seq.selectTrack(4));
+    assert(seq.selectedTrack() == 3 && seq.editStep() == 0);
+    seq.selectTrack(0);
+    assert(!seq.setLength(0) && !seq.setLength(97));
+    assert(seq.playing() && seq.editStep() == 3 && seq.nextStep() == 2);
+    assert(seq.setLength(2)); // Shrink clamps just this cursor and stops all tracks.
+    expect({{2,61,0,false},{4,63,0,false}});
+    assert(!seq.playing() && seq.editStep() == 1 && seq.nextStep() == 0);
+    expectUnreadableStep(view, 3);
+    assert(seq.setLength(6));
+    assert(seq.editStep() == 1); // Growing must not restore a previous cursor.
+    assert(seq.setLength(3) && seq.editStep() == 1); // In-range cursors survive shrink.
+    assert(seq.setLength(1) && seq.editStep() == 0);
+    for (int track = 1; track < 4; ++track) {
+        seq.selectTrack(track);
+        assert(seq.editStep() == cursors[track]);
+        assert(seq.nextStep() == positions[track]);
+    }
+    seq.stop(); seq.step(); seq.resume(); seq.step(); seq.reset();
+    seq.resume(); seq.step(); // Start's reset/resume sequence must not select step zero.
+    seq.stop();
+    expect({{4,63,93,true},{4,63,0,false},{4,63,93,true},{4,63,0,false}});
+    for (int track = 0; track < 4; ++track) {
+        seq.selectTrack(track);
+        assert(seq.editStep() == (track == 0 ? 0 : cursors[track]));
+    }
+}
+
+void runningEditsPreservePlaybackAndReleases() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    assert(seq.setLength(3));
+    assert(seq.setStep(0, 60, 90));
+    assert(seq.setStep(1, 62, 91));
+    assert(seq.setStep(2, 64, 92));
+    seq.resume(); seq.step();
+    expect({{1,60,90,true}});
+    assert(seq.selectStep(0));
+    assert(seq.setStep(seq.editStep(), 70, 80)); // Replace the sounding step.
+    assert(seq.nextStep() == 1 && seq.playing());
+    assert(seq.selectStep(2));
+    assert(seq.setStep(seq.editStep(), 74, 82)); // Edit ahead, not nextStep().
+    expectStep(seq, 0, 70, 80);
+    expectStep(seq, 2, 74, 82);
+    assert(seq.nextStep() == 1);
+    expect({}); // Reads, selection and writes never emit or release notes.
+    seq.step();
+    expect({{1,60,0,false},{1,62,91,true}}); // Release original pitch, not 70.
+    assert(seq.editStep() == 2 && seq.nextStep() == 2);
+    seq.stop(); seq.step();
+    expect({{1,62,0,false}});
+    assert(seq.editStep() == 2 && seq.nextStep() == 2);
+    seq.resume(); seq.step();
+    expect({{1,74,82,true}});
+    assert(seq.selectStep(1));
+    assert(seq.setStep(-1, 77, 83)); // Legacy sentinel still writes next playback step.
+    expectStep(seq, 0, 77, 83);
+    expectStep(seq, 1, 62, 91);
+    seq.clear(); // Likewise clear is playback-relative, not editor-relative.
+    expectStep(seq, 0, 0, 0);
+    expectStep(seq, 1, 62, 91);
+    assert(seq.editStep() == 1 && seq.nextStep() == 0);
+    seq.step();
+    expect({{1,74,0,false}});
+    assert(seq.editStep() == 1 && seq.nextStep() == 1);
+    seq.reset(); seq.resume(); seq.step(); seq.step();
+    expect({{1,62,91,true}});
+    assert(seq.editStep() == 1 && seq.nextStep() == 2);
+    seq.stop();
+    expect({{1,62,0,false}});
+}
+
 int main() {
     independentLengthsAndChannels();
     mutePreservesPhaseAndLiveOwner();
     ownershipIsScopedToChannelAndPitch();
+    readsRespectActiveLength();
+    independentEditCursorsAndResize();
+    runningEditsPreservePlaybackAndReleases();
     puts("Multi-track sequencer regression tests passed");
 }

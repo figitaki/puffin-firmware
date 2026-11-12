@@ -15,6 +15,7 @@ public:
     int selectedTrack() const { return selected; }
     int channel() const { return selected + 1; }
     int nextStep() const { return tracks[selected].s; }
+    int editStep() const { return editSteps[selected]; }
     int length() const { return tracks[selected].getLength(); }
     bool muted() const { return tracks[selected].isMuted(); }
     // All tracks' run states change together, including while muted.
@@ -30,8 +31,19 @@ public:
         return tracks[selected].setStep(index, note, velocity);
     }
 
+    bool getStep(int index, uint8_t &note, uint8_t &velocity) const {
+        return tracks[selected].getStep(index, note, velocity);
+    }
+
+    bool selectStep(int index) {
+        if (index < 0 || index >= length()) return false;
+        editSteps[selected] = index;
+        return true;
+    }
+
     bool setLength(int value) {
         if (!tracks[selected].setLength(value)) return false;
+        if (editSteps[selected] >= value) editSteps[selected] = value - 1;
         stop(); // Never resize only one running member of the transport.
         return true;
     }
@@ -45,5 +57,6 @@ public:
 
 private:
     Sequencer tracks[TrackCount];
+    int editSteps[TrackCount] = {};
     int selected = 0;
 };
