@@ -7,7 +7,6 @@
 #include <Preferences.h>
 #include <PuffinBrain.h>
 #include <Control_Surface.h>
-//#include "Seq.h"
 #include <MIDI.h>
 #include <BleKeyboard.h>  
 #include <BLEDevice.h>

@@ -2,15 +2,15 @@
 
 #include "Sequencer.h"
 
-// Shared transport and selected-track editing. Each monophonic track owns
+// Shared transport and selected-track editing. Each polyphonic track owns
 // its position, length and mute state; MIDI channels are fixed at 1 through 4.
 class MultiTrackSequencer {
 public:
     static const int TrackCount = 4;
 
-    explicit MultiTrackSequencer(NoteOutput &output)
-        : tracks{Sequencer(output, 1), Sequencer(output, 2),
-                 Sequencer(output, 3), Sequencer(output, 4)} {}
+    explicit MultiTrackSequencer(NoteOutput &output, Sequencer::Random random = nullptr)
+        : tracks{Sequencer(output, 1, random), Sequencer(output, 2, random),
+                 Sequencer(output, 3, random), Sequencer(output, 4, random)} {}
 
     int selectedTrack() const { return selected; }
     int channel() const { return selected + 1; }
@@ -29,8 +29,16 @@ public:
         return true;
     }
 
-    bool setStep(int index, int note, int velocity) {
-        return tracks[selected].setStep(index, note, velocity);
+    bool setStep(int index, int note, int velocity, bool append = false) {
+        return tracks[selected].setStep(index, note, velocity, append);
+    }
+
+    bool setStep(int index, const Sequencer::Step &value) {
+        return tracks[selected].setStep(index, value);
+    }
+
+    const Sequencer::Step *getStep(int index) const {
+        return tracks[selected].getStep(index);
     }
 
     bool getStep(int index, uint8_t &note, uint8_t &velocity) const {
@@ -62,9 +70,10 @@ public:
         return selectStep(target < length() ? target : length() - 1);
     }
 
-    void clear() { tracks[selected].clear(); }
+    void clear(int index = -1) { tracks[selected].clear(index); }
     void setMuted(bool value) { tracks[selected].setMuted(value); }
     void step() { for (auto &track : tracks) track.step(); }
+    void pulse() { for (auto &track : tracks) track.pulse(); }
     void stop() { for (auto &track : tracks) track.stop(); }
     void reset() { for (auto &track : tracks) track.reset(); }
     void resume() { for (auto &track : tracks) track.resume(); }

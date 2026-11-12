@@ -112,3 +112,13 @@
 #define EDIT_PAGE_BACK 363
 #define EDIT_PAGE_NEXT 364
 #define EDIT_SET_END   365
+#define CHANCE_DOWN    366
+#define CHANCE_UP      367
+#define RATCHET_DOWN   368
+#define RATCHET_UP     369
+#define LOCK_CC_DOWN   370
+#define LOCK_CC_UP     371
+#define LOCK_VALUE_DOWN 372
+#define LOCK_VALUE_UP  373
+#define LOCK_CLEAR     374
+#define EDIT_DETAILS   375

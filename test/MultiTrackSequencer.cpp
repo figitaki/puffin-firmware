@@ -289,6 +289,46 @@ void pagesAndSelectedEnd() {
     expect({});
 }
 
+void sendControl(uint8_t control, uint8_t value, uint8_t channel) {
+    events.push_back({channel, 128 + control, value, false});
+}
+
+void independentChordsRatchetsAndLocks() {
+    NoteOutput output(send, sendControl);
+    MultiTrackSequencer seq(output);
+    seq.setLength(1); seq.setStep(0,60,91); seq.setStep(0,64,91,true);
+    Sequencer::Step first = *seq.getStep(0);
+    first.ratchet = 2; first.lockCount = 1;
+    first.locks[0].control = 74; first.locks[0].value = 12;
+    assert(seq.setStep(0, first));
+    seq.selectTrack(1);
+    seq.setLength(1); seq.setStep(0,60,73); seq.setStep(0,67,73,true);
+    Sequencer::Step second = *seq.getStep(0);
+    second.ratchet = 3; second.lockCount = 1;
+    second.locks[0].control = 74; second.locks[0].value = 103;
+    assert(seq.setStep(0, second));
+    seq.resume(); seq.step();
+    expect({{1,202,12,false},{1,60,91,true},{1,64,91,true},
+            {2,202,103,false},{2,60,73,true},{2,67,73,true}});
+    seq.pulse(); expect({});
+    seq.pulse();
+    expect({{2,60,0,false},{2,67,0,false},{2,60,73,true},{2,67,73,true}});
+    seq.selectTrack(0); seq.clear(0); // Does not rewrite the active ratchet snapshot.
+    seq.pulse();
+    expect({{1,60,0,false},{1,64,0,false},{1,60,91,true},{1,64,91,true}});
+    seq.setMuted(true);
+    expect({{1,60,0,false},{1,64,0,false}});
+    seq.pulse();
+    expect({{2,60,0,false},{2,67,0,false},{2,60,73,true},{2,67,73,true}});
+    seq.pulse(); seq.step();
+    expect({{2,60,0,false},{2,67,0,false},
+            {2,202,103,false},{2,60,73,true},{2,67,73,true}});
+    seq.stop(); output.panic(); seq.pulse();
+    expect({{2,60,0,false},{2,67,0,false}});
+    seq.selectTrack(1);
+    assert(seq.getStep(0)->count == 2 && seq.getStep(0)->locks[0].value == 103);
+}
+
 int main() {
     independentLengthsAndChannels();
     mutePreservesPhaseAndLiveOwner();
@@ -297,5 +337,6 @@ int main() {
     independentEditCursorsAndResize();
     runningEditsPreservePlaybackAndReleases();
     pagesAndSelectedEnd();
+    independentChordsRatchetsAndLocks();
     puts("Multi-track sequencer regression tests passed");
 }

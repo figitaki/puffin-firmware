@@ -16,8 +16,9 @@
 
 
 //#define CS_USE_NIMBLE
-#include <Seq.h>
+#include "Clock.h"
 #include "MultiTrackSequencer.h"
+#include <esp_system.h>
 #include <Control_Surface.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
 
@@ -39,6 +40,11 @@ bool midiMode;
 bool bridgeBLEtoSER = true;
 bool serialOutput = false;
 bool stepEditing = false;
+bool chordEntry = false;
+enum StepView { StepNotes, StepTrigger, StepControl };
+StepView stepView = StepNotes;
+uint8_t editControl = 74; // MIDI brightness/filter cutoff by convention.
+bool stepFull = false;
 
 bool activeNotes[12] = {false};
 uint8_t liveChannels[128] = {}; // Capture press-time channel across track changes.
@@ -51,8 +57,12 @@ void sendOwnedNote(uint8_t note, uint8_t velocity, bool on, uint8_t channel){
   else midi_out->sendNoteOff(address, velocity);
 }
 
-NoteOutput noteOutput(sendOwnedNote);
-MultiTrackSequencer seq(noteOutput);
+void sendLockedControl(uint8_t control, uint8_t value, uint8_t channel){
+  midi_out->sendControlChange({control, Channel::createChannel(channel)}, value);
+}
+
+NoteOutput noteOutput(sendOwnedNote, sendLockedControl);
+MultiTrackSequencer seq(noteOutput, esp_random);
 
 // Channel/SysEx traffic retains the existing bidirectional bridge. Only the
 // selected clock input may forward transport, preventing competing masters
@@ -112,6 +122,7 @@ void updateSequencerClock(){
   if(tick == Clock::None) return;
   midi_out->sendRealTime(MIDIMessageType::TimingClock);
   if(tick == Clock::Step) seq.step();
+  else seq.pulse();
   midi_out->sendNow();
 }
 
@@ -178,7 +189,7 @@ void processMIDIPress(int function){
     int noteToPlay = function-241;
     activeNotes[noteToPlay%12] = true;
     playNote(noteToPlay, velocity);
-    if(stepEditing) seq.setStep(seq.editStep(),noteToPlay,velocity);
+    if(stepEditing) stepFull = !seq.setStep(seq.editStep(),noteToPlay,velocity,chordEntry);
     else if(seq.playing()) seq.setStep(-1,noteToPlay,velocity);
   }
   switch (function){
@@ -206,6 +217,7 @@ void processMIDIPress(int function){
     case TRACK_3:
     case TRACK_4:
       seq.selectTrack(function - TRACK_1);
+      stepFull = false;
       break;
     case TRACK_MUTE:
       seq.setMuted(!seq.muted());
@@ -223,12 +235,62 @@ void processMIDIPress(int function){
       break;
     case EDIT_TOGGLE:
       stepEditing = !stepEditing;
+      stepFull = false;
+      break;
+    case EDIT_DETAILS:
+      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 3);
+      break;
+    case CHANCE_DOWN:
+    case CHANCE_UP:
+    case RATCHET_DOWN:
+    case RATCHET_UP:
+    case LOCK_CC_DOWN:
+    case LOCK_CC_UP:
+    case LOCK_VALUE_DOWN:
+    case LOCK_VALUE_UP:
+    case LOCK_CLEAR:
+      if(stepEditing) {
+        Sequencer::Step value = *seq.getStep(seq.editStep());
+        stepFull = false;
+        if(function == CHANCE_DOWN || function == CHANCE_UP) {
+          value.chance = constrain(int(value.chance) + (function == CHANCE_UP ? 10 : -10), 0, 100);
+          stepView = StepTrigger;
+        } else if(function == RATCHET_DOWN || function == RATCHET_UP) {
+          const int counts[] = {1, 2, 3, 6};
+          int index = 0;
+          while(counts[index] != value.ratchet) ++index;
+          index = constrain(index + (function == RATCHET_UP ? 1 : -1), 0, 3);
+          value.ratchet = counts[index];
+          stepView = StepTrigger;
+        } else {
+          stepView = StepControl;
+          if(function == LOCK_CC_DOWN || function == LOCK_CC_UP) {
+            editControl = constrain(int(editControl) + (function == LOCK_CC_UP ? 1 : -1), 0, 119);
+          } else {
+            int slot = 0;
+            while(slot < value.lockCount && value.locks[slot].control != editControl) ++slot;
+            if(function == LOCK_CLEAR) {
+              if(slot < value.lockCount) {
+                for(int i = slot; i + 1 < value.lockCount; ++i) value.locks[i] = value.locks[i + 1];
+                --value.lockCount;
+              }
+            } else if(slot < Sequencer::MaxLocks) {
+              const int previous = slot < value.lockCount ? value.locks[slot].value : 64;
+              value.locks[slot].control = editControl;
+              value.locks[slot].value = constrain(previous + (function == LOCK_VALUE_UP ? 1 : -1), 0, 127);
+              if(slot == value.lockCount) ++value.lockCount;
+            } else stepFull = true;
+          }
+        }
+        seq.setStep(seq.editStep(), value);
+      }
       break;
     case EDIT_PREVIOUS:
     case EDIT_NEXT:
     case EDIT_PAGE_BACK:
     case EDIT_PAGE_NEXT:
       if(stepEditing) {
+        stepFull = false;
         const int direction = function == EDIT_PREVIOUS || function == EDIT_PAGE_BACK ? -1 : 1;
         if(function == EDIT_PAGE_BACK || function == EDIT_PAGE_NEXT) {
           seq.selectPage((seq.editPage() + direction + seq.pageCount()) % seq.pageCount());
@@ -247,12 +309,15 @@ void processMIDIPress(int function){
       setMidiMode(false);
       break;
     case PLAY_CHORD:
-      playChord();
+      if(stepEditing) {
+        chordEntry = !chordEntry;
+        stepView = StepTrigger;
+        stepFull = false;
+      }
       break;
     case SEQ_CLEAR:
-      if(stepEditing) seq.setStep(seq.editStep(),0,0);
+      if(stepEditing) { seq.clear(seq.editStep()); stepFull = false; }
       else seq.clear();
-      //chord.constructAtRoot()
   }
 }
 
@@ -285,7 +350,8 @@ struct MyMIDI_Callbacks : MIDI_Callbacks {
     switch(rt.getMessageType()){
       case MIDIMessageType::TimingClock:
         switch(clk.externalPulse(micros())) {
-          case Clock::Step: seq.step(); break;
+          case Clock::Step: seq.step(); midi_out->sendNow(); break;
+          case Clock::Pulse: seq.pulse(); midi_out->sendNow(); break;
           case Clock::Overrun: stopTransport(true); break;
           default: break;
         }
