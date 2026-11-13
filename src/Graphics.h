@@ -243,6 +243,7 @@ void displayStepEditor(){
   const Sequencer::Step &value = *seq.getStep(seq.editStep());
   display.setCursor(24, 19);
   if(stepFull) display.print("FULL");
+  else if(value.tie) display.print(String(seq.editStep() + 1) + "/" + String(seq.length()) + " TIE");
   else if(stepView == StepSwing) {
     const int percent = clk.swing() == 0 ? 50 : clk.swing() == 1 ? 58 : 67;
     display.print(String("SW") + String(percent) + (clk.source() == Clock::Internal ? "" : " OFF"));
@@ -272,7 +273,8 @@ void displayStepEditor(){
   for(int index = first; index < first + Sequencer::StepsPerPage && index < seq.length(); ++index) {
     const int x = 24 + (index - first) * 6;
     seq.getStep(index, note, velocity);
-    if(seq.getStep(index)->count && velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
+    if(seq.getStep(index)->tie) display.fillRect(x + 1, 27, 3, 1, SSD1306_WHITE);
+    else if(seq.getStep(index)->count && velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
     else if(seq.getStep(index)->lockCount) display.drawRect(x + 1, 26, 3, 3, SSD1306_WHITE);
     else display.drawPixel(x + 2, 29, SSD1306_WHITE);
     if(index == seq.editStep()) display.drawRect(x, 24, 6, 7, SSD1306_WHITE);

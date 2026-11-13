@@ -36,9 +36,9 @@ public:
         if (result == Unsupported || result == Unavailable || result == Ambiguous ||
             (result == Corrupt && !replaceCorrupt)) return result;
         if (newest >= 0 && generations[newest] == UINT64_MAX) return SaveFailed;
-        // Loading v1/v2 is read-only. The first deliberate Save upgrades even
-        // unchanged music, retaining the old slot until v3 is verified.
-        if (result == Loaded && versions[newest] == 3 &&
+        // Loading v1/v2/v3 is read-only. The first deliberate Save upgrades even
+        // unchanged music, retaining the old slot until v4 is verified.
+        if (result == Loaded && versions[newest] == 4 &&
             ProjectCodec::sameContent(value, candidates[newest])) {
             baseline = value;
             hasBaseline = true;

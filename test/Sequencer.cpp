@@ -162,6 +162,13 @@ void chanceAndLocksApplyOnceToTheWholeStep() {
     seq.setMuted(false); seq.clear(0); seq.step(); expect({});
     assert(seq.getStep(0)->chance == 100 && seq.getStep(0)->ratchet == 1);
     seq.stop();
+    seq.setLength(2); seq.setStep(0, 60, 91);
+    value.tie = true; value.chance = 0; seq.setStep(1, value);
+    seq.start(); expect({{60,91,true}});
+    seq.step(); expect({{202,0,false},{129,127,false}}); // Tie locks run once, without reattack.
+    for (int i = 0; i < 5; ++i) seq.pulse();
+    expect({}); seq.setMuted(true); expect({{60,0,false}});
+    seq.step(); expect({}); seq.stop();
 }
 
 void chordRatchetTimingAndCancellation() {
@@ -384,7 +391,115 @@ void swingSpansRetainAllSixRatchetHits() {
     }
 }
 
+void continuationTiesHoldChordsWithoutRetrigger() {
+    NoteOutput output(send);
+    Sequencer seq(output);
+    seq.setLength(4);
+    Sequencer::Step chord;
+    chord.count = 2; chord.notes[0] = 61; chord.notes[1] = 68;
+    chord.velocity = 93; chord.gate = 1;
+    Sequencer::Step tie;
+    tie.tie = true; tie.count = 1; tie.notes[0] = 79;
+    tie.velocity = 111; tie.chance = 0; tie.ratchet = 6; tie.gate = 1;
+    assert(seq.setStep(0, chord) && seq.setStep(1, tie) && seq.setStep(2, tie));
+    seq.start(); expect({{61,93,true},{68,93,true}});
+    for (int step = 0; step < 3; ++step) {
+        for (int pulse = 0; pulse < 5; ++pulse) seq.pulse();
+        expect({});
+        seq.step();
+        if (step < 2) expect({});
+    }
+    expect({{61,0,false},{68,0,false}}); // Ordinary rest ends the chain.
+    seq.stop(); expect({});
+    seq.setStep(0, tie); seq.start(); seq.step(); seq.step(); seq.stop();
+    expect({}); // Initial/orphan continuations never invent a note.
+    chord.chance = 0; seq.setStep(0, chord); seq.start(); seq.step(); seq.stop();
+    expect({}); // A missed attack stays silent through a continuation.
+}
+
+void finalRatchetHitExtendsIntoTie() {
+    NoteOutput output(send);
+    Sequencer seq(output); seq.setLength(3);
+    Sequencer::Step attack; attack.count = 1; attack.notes[0] = 64;
+    attack.velocity = 81; attack.gate = 1; attack.ratchet = 3;
+    Sequencer::Step tie; tie.tie = true;
+    seq.setStep(0, attack); seq.setStep(1, tie);
+    seq.start(); expect({{64,81,true}});
+    seq.pulse(); expect({{64,0,false}});
+    seq.pulse(); expect({{64,81,true}});
+    seq.pulse(); expect({{64,0,false}});
+    seq.pulse(); expect({{64,81,true}});
+    seq.pulse(); seq.step();
+    for (int i = 0; i < 5; ++i) seq.pulse();
+    expect({});
+    seq.step(); expect({{64,0,false}});
+    seq.stop(); expect({});
+}
+
+void tiesRetainLiveOwnershipAndSafeCleanup() {
+    NoteOutput output(send);
+    Sequencer seq(output); seq.setLength(3); seq.setStep(0, 60, 83);
+    Sequencer::Step tie; tie.tie = true; seq.setStep(1, tie);
+    output.press(60, 107); expect({{60,107,true}});
+    seq.start(); seq.step(); seq.stop(); expect({});
+    output.release(60); expect({{60,0,false}});
+    seq.resume(); seq.step(); seq.step(); expect({{60,83,true}});
+    seq.step(); seq.setMuted(true); expect({{60,0,false}});
+    seq.setMuted(false); seq.pulse(); seq.stop(); expect({});
+    seq.start(); seq.step(); seq.reset(); expect({{60,83,true},{60,0,false}});
+    seq.start(); seq.step(); seq.setLength(2); expect({{60,83,true},{60,0,false}});
+}
+
+void tiesCrossPagesWrapAndSwungSpans() {
+    NoteOutput output(send);
+    for (int attackIndex : {15,63}) {
+        Sequencer seq(output); seq.setLength(attackIndex == 15 ? 18 : 64);
+        seq.setStep(attackIndex, 67, 79);
+        Sequencer::Step tie; tie.tie = true;
+        seq.setStep((attackIndex + 1) % seq.getLength(), tie);
+        seq.start();
+        for (int i = 0; i < attackIndex; ++i) seq.step();
+        expect({{67,79,true}});
+        seq.step(); expect({}); seq.step(); expect({{67,0,false}});
+        seq.stop();
+    }
+    for (int duration : {6,8,10,12,14,16}) {
+        Sequencer seq(output); seq.setLength(3);
+        Sequencer::Step attack; attack.count = 1; attack.notes[0] = 71;
+        attack.velocity = 87; attack.gate = 1;
+        Sequencer::Step tie; tie.tie = true;
+        seq.setStep(0, attack); seq.setStep(1, tie); seq.resume();
+        const int scale = duration == 6 ? 1 : 2;
+        seq.step(uint8_t(duration), uint8_t(scale)); expect({{71,87,true}});
+        for (int i = 1; i < duration; ++i) seq.pulse();
+        seq.step(uint8_t(duration), uint8_t(scale));
+        for (int i = 1; i < duration; ++i) seq.pulse();
+        expect({}); seq.step(); expect({{71,0,false}}); seq.stop();
+    }
+}
+
+void tieEditsLatchAndNoteEntryReplacesContinuation() {
+    NoteOutput output(send);
+    Sequencer seq(output); seq.setLength(3);
+    Sequencer::Step attack; attack.count = 1; attack.notes[0] = 62;
+    attack.velocity = 89; attack.gate = 1;
+    Sequencer::Step tie; tie.tie = true; tie.count = 1; tie.notes[0] = 70; tie.velocity = 95;
+    seq.setStep(0, attack); seq.setStep(1, tie); seq.start();
+    seq.clear(1); // Does not retroactively shorten the currently sounding hit.
+    for (int i = 0; i < 5; ++i) seq.pulse();
+    expect({{62,89,true}}); seq.step(); expect({{62,0,false}}); seq.stop();
+    seq.setStep(1, tie); assert(seq.setStep(1, 70, 95, true));
+    assert(!seq.getStep(1)->tie && seq.getStep(1)->count == 1);
+    seq.setStep(1, tie); assert(seq.setStep(1, 73, 101));
+    assert(!seq.getStep(1)->tie && seq.getStep(1)->notes[0] == 73);
+}
+
 int main() {
+    continuationTiesHoldChordsWithoutRetrigger();
+    finalRatchetHitExtendsIntoTie();
+    tiesRetainLiveOwnershipAndSafeCleanup();
+    tiesCrossPagesWrapAndSwungSpans();
+    tieEditsLatchAndNoteEntryReplacesContinuation();
     swingSpansRetainAllSixRatchetHits();
     gatesReleaseBeforeTheNextStep();
     ratchetGatesAndEditsUseTheActiveSnapshot();

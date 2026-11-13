@@ -1,9 +1,11 @@
-# Project persistence v3 (v1/v2-compatible reader)
+# Project persistence v4 (v1/v2/v3-compatible reader)
 
 One local project contains one four-track pattern. Saves include every track's
 active length/mute and all 64 steps, including steps hidden by shorter lengths.
-Each step retains ordered notes, shared velocity, chance, ratchets, gate, and ordered
-MIDI CC locks. Internal tempo and global sixteenth swing belong to the project.
+Each step retains ordered notes, shared velocity, chance, ratchets, gate, tie, and
+ordered MIDI CC locks. A tie is a continuation holding the preceding note/chord;
+the step's own musical fields remain stored and validated even while dormant.
+Internal tempo and global sixteenth swing belong to the project.
 Runtime transport, editor cursors/tools, clock source/output route, receiver CC
 state, typing configuration, and Bluetooth identities do not.
 
@@ -22,9 +24,9 @@ are little-endian; the 16 UUID bytes retain their standard byte order.
 | Header offset | Bytes | Value |
 | --- | --- | --- |
 | 0 | 4 | ASCII `PFNP` |
-| 4 | 2 | Schema version 3 (reader also accepts 1 and 2) |
+| 4 | 2 | Schema version 4 (reader also accepts 1, 2 and 3) |
 | 6 | 2 | Header size 32 |
-| 8 | 4 | Payload size 4,655 (v2: 4,654; v1: 4,398) |
+| 8 | 4 | Payload size 4,687 (v3: 4,655; v2: 4,654; v1: 4,398) |
 | 12 | 8 | Nonzero local save generation |
 | 20 | 4 | Flags, zero |
 | 24 | 4 | CRC-32/ISO-HDLC |
@@ -53,19 +55,30 @@ Payload order:
   Swing participates in validation, musical equality and dirty detection.
   `capture(seq, tempo, swing = 0)` stores it; `apply` still replaces tracks only.
   The caller restores tempo and clock swing separately after validation.
+- After swing: a 32-byte tie bitmap at payload offset 4,655 (record offsets
+  4,687–4,718 inclusive). Tracks are ordered 1–4, eight bytes per track;
+  within each track steps 0–63 are LSB-first. For zero-based track `t` and step
+  `s`, bit `s % 8` of record byte `4687 + t * 8 + s / 8` is its tie bool.
+  Every bit is meaningful; every possible bitmap is valid, including all-zero
+  (default) and all-one. No raw C++ bool representation is serialized or tested
+  as an invalid value. All 256 ties participate in equality and dirty detection,
+  even on silent/automation-only steps or beyond the active length. All v3
+  payload offsets are unchanged; only the schema/size/CRC header fields differ.
 
 Unused note/lock slots are zero on write and ignored on read/comparison. Order of
 used notes/locks is preserved because it affects serial MIDI output order.
 Note 0, velocity/CC value 0, silent notes, automation-only steps, 0% chance, and
 hidden steps are valid; none are treated as missing data.
 
-One v3 record is exactly 4,687 bytes; two v3 files occupy 9,374 bytes before
+One v4 record is exactly 4,719 bytes; two v4 files occupy 9,438 bytes before
 filesystem overhead. The decoder rejects bad counts, duplicate pitches/CCs,
 unsupported ratchets, invalid IDs, nonzero flags/reserved, wrong lengths, checksum
 errors, truncation, and trailing bytes. Musical limits match the current engine:
 length 1–64; BPM 20–300; notes/velocity/values 0–127; chance 0–100; ratchets
 1/2/3/6; gate 1–6; at most four notes and four unique CC0–119 locks per step.
-All 256 gates are validated, even beyond active track lengths, as is swing 0–2.
+All 256 steps' dormant fields are validated, including gates, even when tied or
+beyond active track lengths, as is swing 0–2. Ties themselves are bools and
+cannot carry out-of-range values.
 Validation finishes before publishing either the snapshot or its generation. The decoder
 uses two passes and only a small Step temporary; large buffers belong to the
 store, not the task stack.
@@ -73,8 +86,11 @@ store, not the task stack.
 Version 1 has exactly 4,430 bytes, a 4,398-byte payload and 17-byte steps.
 Its reader supplies gate 6 for every step, preserving all original identities,
 music and note/lock order. Version 2 has exactly 4,686 bytes, a 4,654-byte payload
-and 18-byte steps including gate. Both legacy readers supply swing 0, even when
-decoding over an existing nonzero-swing snapshot. All three versions require their
+and 18-byte steps including gate. These two readers supply swing 0, even when
+decoding over an existing nonzero-swing snapshot. Version 3 has exactly 4,687
+bytes and a 4,655-byte payload, adding swing after the tracks. All three legacy
+readers supply tie=false for every step, even when decoding over an all-tied
+snapshot. All four versions require their
 exact header/payload sizes and CRC; truncation and trailing bytes are rejected,
 not guessed at.
 
@@ -84,7 +100,7 @@ not guessed at.
 with the newest valid generation winning. No separate active-file pointer is
 needed. Save writes only the older or invalid slot, checks all writes, `fsync`
 and `close`, then rereads and validates it before clearing the dirty state.
-Unchanged clean v3 saves skip writes. Repairing a damaged second slot does write a
+Unchanged clean v4 saves skip writes. Repairing a damaged second slot does write a
 new generation even if the recovered music itself is unchanged. The previous
 valid generation remains untouched.
 
@@ -114,17 +130,17 @@ ordinary Save asks before replacing damaged files. A recognizable unsupported
 version blocks ordinary/confirmed Save and automatic restore, even if the other
 slot contains a valid old version. Equal-generation records with differing
 content also block Load/Save. With identical content at equal generations,
-the newest schema is preferred (v3 over v2 over v1); otherwise generation takes
+the newest schema is preferred (v4 over v3 over v2 over v1); otherwise generation takes
 precedence over schema.
 Explicit destructive initialization remains possible only after its own warning.
 
-Load and boot restore never rewrite files. Loading v1/v2 migrates only in memory
+Load and boot restore never rewrite files. Loading v1/v2/v3 migrates only in memory
 and establishes a clean musical baseline. The first deliberate Save still writes
-v3 at generation + 1 into the other slot, even without musical edits. The legacy
+v4 at generation + 1 into the other slot, even without musical edits. The legacy
 source remains untouched through durable write and verified readback (and until
 a later save needs its slot). Write/sync/readback failure does not advance the
-baseline. On reboot, a complete valid newer v3 wins; an incomplete/corrupt v3
-falls back to the retained v1/v2. Subsequent unchanged v3 saves skip writes, unless
+baseline. On reboot, a complete valid newer v4 wins; an incomplete/corrupt v4
+falls back to the retained v1/v2/v3. Subsequent unchanged v4 saves skip writes, unless
 the other slot needs repair. Recognizable future schemas still block all normal
 load/save, including confirmed replacement, regardless of the other slot.
 
@@ -165,10 +181,12 @@ Typing and maintenance boots do not initialize or format project storage.
 Native snapshot/store tests exercise asymmetric track lengths, hidden content,
 expression/automation playback after restore, canonical comparison, malformed
 records, unknown versions, ambiguous generations, failed writes/readback, and
-interruption at every byte boundary, including v1/v2-to-v3 migration with unchanged
-content, hidden gate edits and swing-only edits. Independent v1/v2
-legacy fixtures cover asymmetric hidden music and ordered content; v3 byte
-layout and CRC have a fixed Python struct/zlib reference. Mixed-version tests
+interruption at every byte boundary, including v1/v2/v3-to-v4 migration with unchanged
+content, hidden gate edits, swing-only edits and hidden tie-only edits. Independent
+v1/v2/v3 legacy fixtures cover asymmetric hidden music and ordered content; v4 byte
+layout and CRC have fixed Python struct/zlib references with both zero and
+nonuniform tie bitmaps. Tests cover all 256 tie positions, every bitmap byte
+value, dormant tied fields, and hidden tie dirty/revert behavior. Mixed-version tests
 cover generation selection, equal-generation ties, read-only loading and the
 first unchanged migration Save. These tests model storage faults; they do
 not prove the physical flash/filesystem power-loss behavior.
@@ -176,8 +194,8 @@ not prove the physical flash/filesystem power-loss behavior.
 Before performance use, check on a real ProS3:
 
 - Save distinctive four-track music, power-cycle in MIDI mode, and verify notes,
-  lengths/mutes, tempo, swing, chords, ratchets, gates and CC ordering at a receiver.
-- Save with hidden notes beyond step 19, reboot, expand and confirm they return.
+  lengths/mutes, tempo, swing, chords, ratchets, gates, ties and CC ordering at a receiver.
+- Save with hidden notes/ties beyond step 19, reboot, expand and confirm they return.
 - Confirm Save/Load refuse during internal and external playback. Check held-note
   cleanup, discard/cancel prompts, and that completion never resumes the clock.
 - Cut power repeatedly during actual writes and verify recovery produces a whole
@@ -189,4 +207,4 @@ Before performance use, check on a real ProS3:
 
 Two generations cannot protect against arbitrary flash-device failure or complete
 filesystem loss. There is no export UI, multi-project bank, autosave, song mode,
-cloud dependency, or multiplayer journal in v3.
+cloud dependency, or multiplayer journal in v4.

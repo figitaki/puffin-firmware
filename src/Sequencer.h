@@ -18,6 +18,7 @@ public:
         uint8_t count = 0, velocity = 0;
         uint8_t chance = 100, ratchet = 1;
         uint8_t gate = 6; // 24-PPQN pulses per hit; next hit/step truncates it.
+        bool tie = false; // Continue the preceding hit; no new note-on on this step.
         Lock locks[MaxLocks];
         uint8_t lockCount = 0;
     };
@@ -104,7 +105,8 @@ public:
             velocity < 0 || velocity > 127) return false;
         Step &value = notes[index];
         if (append && velocity) {
-            for (int i = 0; i < value.count; ++i) if (value.notes[i] == note) return true;
+            for (int i = 0; i < value.count; ++i)
+                if (value.notes[i] == note) { value.tie = false; return true; }
             if (value.count == MaxNotes) return false;
             value.notes[value.count++] = uint8_t(note);
         } else {
@@ -112,6 +114,7 @@ public:
             value.count = velocity ? 1 : 0;
         }
         value.velocity = uint8_t(velocity);
+        value.tie = false; // Deliberate note entry replaces a continuation.
         return true;
     }
 
@@ -134,19 +137,25 @@ public:
     // duration/scale come from the clock: 6/1 externally, 8–16/2 internally.
     void step(uint8_t duration = 6, uint8_t scale = 1) {
         if (!play) return;
-        releaseNote();
+        const Step &value = notes[s];
+        continuing = value.tie;
+        if (!continuing || muted) releaseNote();
         triggered = false;
         pulsePhase = 0;
         stepDuration = duration;
         pulseScale = scale;
         nextRatchet = 1;
-        const Step &value = notes[s];
-        if (!muted && value.chance && (value.chance == 100 || roll() < value.chance)) {
-            activeStep = value; // Running edits affect the next visit, not pending ratchets.
+        // Latch the next continuation now: running edits do not change this hit.
+        nextTied = notes[(s + 1) % length].tie;
+        if (!muted && (continuing || (value.chance &&
+            (value.chance == 100 || roll() < value.chance)))) {
             for (int i = 0; i < value.lockCount; ++i)
                 output.sendControl(value.locks[i].control, value.locks[i].value, channel);
-            triggered = value.count && value.velocity;
-            pressNote();
+            if (!continuing) {
+                activeStep = value; // Retain the sounding chord throughout a tie chain.
+                triggered = value.count && value.velocity;
+                pressNote();
+            }
         }
         s = (s + 1) % length;
     }
@@ -156,7 +165,8 @@ public:
     void pulse() {
         if (!play || pulsePhase + 1 >= stepDuration) return;
         ++pulsePhase;
-        if (sounding && ++gateAge >= activeStep.gate * pulseScale) releaseNote();
+        if (sounding && !continuing && ++gateAge >= activeStep.gate * pulseScale &&
+            !(nextTied && nextRatchet >= activeStep.ratchet)) releaseNote();
         if (triggered && nextRatchet < activeStep.ratchet &&
             pulsePhase == nextRatchet * stepDuration / activeStep.ratchet) {
             releaseNote();
@@ -193,7 +203,7 @@ private:
     Step notes[Capacity] = {};
     int length = StepsPerPage;
     Step activeStep;
-    bool sounding = false, triggered = false;
+    bool sounding = false, triggered = false, continuing = false, nextTied = false;
     uint8_t pulsePhase = 0, gateAge = 0;
     uint8_t stepDuration = 6, pulseScale = 1, nextRatchet = 1;
 

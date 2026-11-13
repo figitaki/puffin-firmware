@@ -395,7 +395,21 @@ void remoteTrackReplacementPreservesStoppedState() {
     output.release(79, 3); expect({{3,79,0,false}});
 }
 
+void tiesAreIndependentAcrossTracksAndMute() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    Sequencer::Step tie; tie.tie = true;
+    seq.selectTrack(0); seq.setLength(3); seq.setStep(0, 60, 91); seq.setStep(1, tie);
+    seq.selectTrack(1); seq.setLength(2); seq.setStep(0, 65, 103);
+    seq.reset(); seq.resume(); seq.step(); expect({{1,60,91,true},{2,65,103,true}});
+    seq.step(); expect({{2,65,0,false}}); // Track1 holds while track2 rests.
+    seq.selectTrack(0); seq.setMuted(true); expect({{1,60,0,false}});
+    seq.setMuted(false); seq.step(); expect({{2,65,103,true}});
+    seq.stop(); expect({{2,65,0,false}});
+}
+
 int main() {
+    tiesAreIndependentAcrossTracksAndMute();
     remoteTrackReplacementPreservesStoppedState();
     gatesAreIndependentAcrossTracks();
     velocityEditsKeepActiveChordSnapshot();

@@ -134,3 +134,4 @@
 #define PROJECT_YES    383
 #define PROJECT_CANCEL 384
 #define SWING_CYCLE    385
+#define TIE_TOGGLE     386

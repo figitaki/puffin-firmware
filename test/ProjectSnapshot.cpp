@@ -35,6 +35,7 @@ static ProjectSnapshot asymmetric() {
             v.chance = uint8_t((s + 13 * t) % 101);
             v.ratchet = ratchets[(s + t) % 4];
             v.gate = uint8_t(1 + (s + t) % 6);
+            v.tie = s >= 4 && (s + t) % 3 == 0;
             v.lockCount = uint8_t((s + t + 2) % 5);
             for (int n = 0; n < 4; ++n) {
                 v.notes[n] = uint8_t((s + t * 19 + n * 7) % 128);
@@ -109,13 +110,14 @@ static void canonicalAndWire() {
     std::vector<uint8_t> wire(ProjectCodec::Size), other(ProjectCodec::Size);
     assert(ProjectCodec::crc32(reinterpret_cast<const uint8_t *>("123456789"), 9) == 0xcbf43926u);
     assert(ProjectCodec::encode(p, UINT64_C(0x0102030405060708), wire.data(), wire.size()));
-    const uint8_t header[] = {'P','F','N','P',3,0,32,0,47,18,0,0,8,7,6,5,4,3,2,1,0,0,0,0,
-                              0xe0,0x71,0x4f,0xb0,0,0,0,0};
-    // Independent fixture: Python struct.pack LE plus zlib.crc32 => 0xb04f71e0.
+    const uint8_t header[] = {'P','F','N','P',4,0,32,0,79,18,0,0,8,7,6,5,4,3,2,1,0,0,0,0,
+                              0xa7,0x28,0x27,0x57,0,0,0,0};
+    // Independent fixture: Python struct.pack LE plus zlib.crc32 => 0x572728a7.
     assert(!memcmp(wire.data(), header, sizeof(header)));
     assert(wire[32] == 1 && wire[48] == 1 && wire[52] == 120);
     assert(wire[54] == 1 && wire[58] == 16 && wire[60 + 6] == 100 && wire[60 + 7] == 1);
-    assert(wire.size() == 4687 && ProjectCodec::PayloadSize == 4655 && wire.back() == 0);
+    assert(wire.size() == 4719 && ProjectCodec::PayloadSize == 4687 && wire[4686] == 0);
+    for (size_t i = 4687; i < wire.size(); ++i) assert(wire[i] == 0);
     for (int t = 0; t < 4; ++t)
         for (int s = 0; s < 64; ++s) assert(wire[60 + t * 1158 + s * 18 + 17] == 6);
     ProjectSnapshot dirty = p;
@@ -157,19 +159,19 @@ static void invalidIsAtomic() {
         assert(ProjectCodec::encode(candidate, 7, encoded.data(), encoded.size()) == (swing <= 2));
         if (swing > 2) {
             assert(encoded == wire);
-            bad = wire; bad.back() = uint8_t(swing); checksum(bad);
+            bad = wire; bad[4686] = uint8_t(swing); checksum(bad);
             reject(bad, ProjectCodec::Invalid);
         } else {
-            assert(encoded.back() == swing);
+            assert(encoded[4686] == swing);
             ProjectSnapshot out; uint64_t generation = 0;
             assert(ProjectCodec::decode(encoded.data(), encoded.size(), out, generation) == ProjectCodec::Valid);
             assert(ProjectCodec::sameContent(out, candidate) && generation == 7);
         }
     }
     bad = wire; bad.push_back(0);
-    bad[4] = 4; reject(bad, ProjectCodec::Unsupported);
+    bad[4] = 5; reject(bad, ProjectCodec::Unsupported);
     bad.resize(ProjectCodec::Size + 100, 0); reject(bad, ProjectCodec::Unsupported);
-    bad = wire; bad[4] = 4; bad.resize(6); reject(bad, ProjectCodec::Unsupported);
+    bad = wire; bad[4] = 5; bad.resize(6); reject(bad, ProjectCodec::Unsupported);
     bad = wire; bad[0] = 'X'; reject(bad, ProjectCodec::Invalid);
     bad = wire; bad.back() ^= 1; reject(bad, ProjectCodec::Invalid);
     const size_t offsets[] = {6,8,20,28,48,54,58,59,60+4,60+5,60+6,60+7,60+8,60+9,60+16,
@@ -190,6 +192,7 @@ static void invalidIsAtomic() {
     for (int kind = 0; kind < 13; ++kind) {
         ProjectSnapshot invalid = good;
         auto &s = invalid.tracks[3].steps[63];
+        s.tie = true; // Dormant tied content must still be validated.
         switch (kind) {
         case 0: invalid.projectID[0] = 0; memset(invalid.projectID, 0, 16); break;
         case 1: invalid.patternID = 2; break;
@@ -219,6 +222,8 @@ static void invalidIsAtomic() {
 
 static void everyGate() {
     auto good = asymmetric();
+    // Ties do not exempt dormant fields from validation, including hidden steps.
+    for (auto &t : good.tracks) for (auto &s : t.steps) s.tie = true;
     std::vector<uint8_t> wire(ProjectCodec::Size);
     assert(ProjectCodec::encode(good, 7, wire.data(), wire.size()));
     for (int t = 0; t < 4; ++t) {
@@ -249,14 +254,50 @@ static void everyGate() {
     }
 }
 
-// Independent legacy writer: never calls encode or removes bytes from v3.
+static void everyTie() {
+    ProjectSnapshot blank; blank.projectID[0] = 1;
+    for (auto &t : blank.tracks) t.length = 1;
+    std::vector<uint8_t> wire(ProjectCodec::Size);
+    for (int bit = 0; bit < 256; ++bit) {
+        auto p = blank;
+        p.tracks[bit / 64].steps[bit % 64].tie = true;
+        assert(p.valid() && !ProjectCodec::sameContent(p, blank));
+        assert(ProjectCodec::encode(p, 7, wire.data(), wire.size()));
+        for (int byte = 0; byte < 32; ++byte)
+            assert(wire[4687 + byte] == (byte == bit / 8 ? 1u << (bit % 8) : 0));
+        ProjectSnapshot out; uint64_t generation = 0;
+        assert(ProjectCodec::decode(wire.data(), wire.size(), out, generation) == ProjectCodec::Valid);
+        assert(ProjectCodec::sameContent(p, out) && generation == 7);
+    }
+    // Every byte value is valid; no invented invalid bool object representations.
+    for (unsigned byte = 0; byte <= 255; ++byte) {
+        assert(ProjectCodec::encode(blank, 9, wire.data(), wire.size()));
+        memset(wire.data() + 4687, int(byte), 32); checksum(wire);
+        ProjectSnapshot out; uint64_t generation = 0;
+        assert(ProjectCodec::decode(wire.data(), wire.size(), out, generation) == ProjectCodec::Valid);
+        for (int bit = 0; bit < 256; ++bit)
+            assert(out.tracks[bit / 64].steps[bit % 64].tie == ((byte & (1u << (bit % 8))) != 0));
+        std::vector<uint8_t> encoded(ProjectCodec::Size);
+        assert(ProjectCodec::encode(out, generation, encoded.data(), encoded.size()) && encoded == wire);
+    }
+    // Independent Python struct/zlib fixture with a nonuniform, nonzero bitmap.
+    blank.tracks[0].length = blank.tracks[1].length = blank.tracks[2].length = blank.tracks[3].length = 16;
+    for (int bit = 0; bit < 256; ++bit)
+        blank.tracks[bit / 64].steps[bit % 64].tie = ((uint8_t((bit / 8) * 7 + 1) >> (bit % 8)) & 1) != 0;
+    assert(ProjectCodec::encode(blank, UINT64_C(0x0102030405060708), wire.data(), wire.size()));
+    for (int byte = 0; byte < 32; ++byte) assert(wire[4687 + byte] == uint8_t(byte * 7 + 1));
+    const uint8_t crc[] = {0x6f, 0xa9, 0xce, 0xcc};
+    assert(!memcmp(wire.data() + 24, crc, 4));
+}
+
+// Independent legacy writer: never calls encode or removes bytes from v4.
 static std::vector<uint8_t> legacyFixture(const ProjectSnapshot &p, unsigned version = 1) {
     std::vector<uint8_t> wire;
     auto append = [&](uint64_t n, int bytes) {
         for (int i = 0; i < bytes; ++i) wire.push_back(uint8_t(n >> (8 * i)));
     };
     append(0x504e4650, 4); append(version, 2); append(32, 2);
-    append(version == 1 ? 4398 : 4654, 4);
+    append(version == 1 ? 4398 : version == 2 ? 4654 : 4655, 4);
     append(UINT64_C(0x0102030405060708), 8); append(0, 4); append(0, 4); append(0, 4);
     for (auto b : p.projectID) append(b, 1);
     append(p.patternID, 4); append(p.bpm, 2);
@@ -270,10 +311,11 @@ static std::vector<uint8_t> legacyFixture(const ProjectSnapshot &p, unsigned ver
                 append(i < s.lockCount ? s.locks[i].value : 0, 1);
             }
             append(s.lockCount, 1);
-            if (version == 2) append(s.gate, 1);
+            if (version >= 2) append(s.gate, 1);
         }
     }
-    assert(wire.size() == (version == 1 ? 4430U : 4686U));
+    if (version == 3) append(p.swing, 1);
+    assert(wire.size() == (version == 1 ? 4430U : version == 2 ? 4686U : 4687U));
     checksum(wire);
     return wire;
 }
@@ -281,19 +323,21 @@ static std::vector<uint8_t> legacyFixture(const ProjectSnapshot &p, unsigned ver
 static void legacyMigration(unsigned version) {
     ProjectSnapshot blank; blank.projectID[0] = 1;
     auto wire = legacyFixture(blank, version);
-    // Independent Python struct.pack/zlib fixtures retained for both old schemas.
-    const uint32_t crc = version == 1 ? 0x0fdbe1d0u : 0xd9b5a861u;
+    // Independent Python struct.pack/zlib fixtures retained for all old schemas.
+    const uint32_t crc = version == 1 ? 0x0fdbe1d0u : version == 2 ? 0xd9b5a861u : 0xb04f71e0u;
     for (int i = 0; i < 4; ++i) assert(wire[24 + i] == uint8_t(crc >> (8 * i)));
     auto expected = asymmetric();
     wire = legacyFixture(expected, version);
-    expected.swing = 0;
+    if (version < 3) expected.swing = 0;
+    for (auto &t : expected.tracks) for (auto &s : t.steps) s.tie = false;
     if (version == 1) for (auto &t : expected.tracks) for (auto &s : t.steps) s.gate = 6;
     ProjectSnapshot out = asymmetric();
+    for (auto &t : out.tracks) for (auto &s : t.steps) s.tie = true;
     uint64_t generation = 99;
     assert(ProjectCodec::decode(wire.data(), wire.size(), out, generation) == ProjectCodec::Valid);
     assert(generation == UINT64_C(0x0102030405060708));
     assert(ProjectCodec::sameContent(expected, out));
-    assert(out.swing == 0);
+    assert(out.swing == (version == 3 ? 2 : 0));
     std::vector<uint8_t> upgraded(ProjectCodec::Size);
     assert(ProjectCodec::encode(out, generation, upgraded.data(), upgraded.size()));
     const size_t trackSize = version == 1 ? 1094 : 1158;
@@ -315,12 +359,12 @@ static void legacyMigration(unsigned version) {
         reject(std::vector<uint8_t>(wire.begin(), wire.begin() + n));
     auto bad = wire; bad.push_back(0); reject(bad);
     bad = wire; bad[60 + 3 * trackSize + 63 * stepSize + 16] = 5; checksum(bad); reject(bad);
-    bad = wire; bad[4] = version == 1 ? 2 : 3; checksum(bad); reject(bad);
+    bad = wire; bad[4] = uint8_t(version + 1); checksum(bad); reject(bad);
     bad = upgraded; bad[4] = 1; checksum(bad); reject(bad);
 }
 
 int main() {
-    roundtripAndPlayback(); canonicalAndWire(); invalidIsAtomic(); everyGate();
-    legacyMigration(1); legacyMigration(2);
+    roundtripAndPlayback(); canonicalAndWire(); invalidIsAtomic(); everyGate(); everyTie();
+    legacyMigration(1); legacyMigration(2); legacyMigration(3);
     puts("Project snapshot regression tests passed");
 }
