@@ -92,8 +92,10 @@ debounce interval and GPIO settling delay still need confirmation on hardware.
 ## Alternative typing layouts
 
 QWERTY is the default. In typing mode, hold Fn, then GUI, and press the physical
-Q, W, or E position to choose QWERTY, standard Colemak (not Colemak-DH), or Dvorak,
-respectively. These shortcuts are position-based even after changing layouts.
+Q, W, or E position to choose QWERTY, Colemak-DH, or Dvorak, respectively.
+The Colemak-DH preset matches the base layer of the `figitaki` Corne keymap
+(`keyboards/crkbd/keymaps/figitaki` in figitaki/qmk_firmware), without its
+home-row mod-taps. These shortcuts are position-based even after changing layouts.
 They replace the redundant left-side 1/2/3 bindings in the number-pad layer;
 the right-side number pad and the normal Fn number row remain available.
 
