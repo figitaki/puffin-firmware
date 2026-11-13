@@ -95,8 +95,14 @@ NVS remains separate. Ordinary application updates must not upload a filesystem
 image or erase flash. An installed device's partition map and prior filesystem
 contents still need checking before first initialization.
 
-Mount never formats automatically. A failed mount may mean corruption or a
-previous filesystem, not an empty partition. Fn+C opens a separate destructive
+Mount never formats automatically. On mount failure, the adapter checks every
+byte of the `spiffs` partition. Only an entirely erased (0xFF), successfully read
+partition is treated as empty/uninitialized: boot shows the normal blank pattern,
+and explicit Save shows `STORAGE NOT SETUP` with Fn+C setup instructions. A mounted
+filesystem with no saves and a healthy restored project also boot silently.
+Nonblank mount failures (including old filesystems), partition/read failures,
+corrupt records, unsupported schemas and conflicting generations retain their
+errors; OTA does not excuse or erase them. Fn+C opens a separate destructive
 initialization prompt; Fn+V erases that data partition and mounts it, while Fn+B
 cancels. This erases all its files, not just these two snapshots, but not bonds,
 typing settings, or application slots. Initialization retains working music in

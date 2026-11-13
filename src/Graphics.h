@@ -212,18 +212,19 @@ bool displayProjectStatus(){
   display.clearDisplay(); // Project confirmations use the entire small OLED.
   display.setFont(&Font5x7FixedMono);
   display.setTextSize(1);
-  display.setCursor(0, 8);
+  display.setCursor(1, 8);
   if(projectPrompt == PROJECT_LOAD) display.print("DISCARD EDITS?");
   else if(projectPrompt == PROJECT_INIT) display.print("ERASE STORAGE?");
   else if(projectPrompt == PROJECT_SAVE) display.print("REPLACE FILES?");
   else display.print(projectNotice);
-  display.setCursor(0, 19);
+  display.setCursor(1, 19);
   if(projectPrompt == PROJECT_INIT) display.print("ALL PROJECTS LOST");
   else if(projectPrompt == PROJECT_LOAD) display.print("LOAD LAST SAVE");
   else if(projectPrompt == PROJECT_SAVE) display.print("OLD SAVES OVERWRITE");
-  else if(projectNotice && !strcmp(projectNotice, "STORAGE ERROR")) display.print("FN+C STORAGE SETUP");
+  else if(projectNotice && (!strcmp(projectNotice, "STORAGE ERROR") ||
+                            !strcmp(projectNotice, "STORAGE NOT SETUP"))) display.print("FN+C STORAGE SETUP");
   else display.print(projectDirty ? "UNSAVED *" : "SAVED");
-  display.setCursor(0, 30);
+  display.setCursor(1, 30);
   if(projectPrompt) display.print("FN+V YES / FN+B NO");
   else if(projectTransportPaused) display.print("START/CONT TO RESUME");
   else display.print("FN+Z SAVE / FN+X LOAD");

@@ -198,7 +198,9 @@ void setupSequencer(){
     clk.setBPM(project.bpm, micros());
     clk.setSwing(project.swing);
   }
-  projectResult(result);
+  // Normal boot is silent: a mounted empty filesystem or a verified erased
+  // partition simply starts a new pattern. Explicit Load still reports Empty.
+  if(result != ProjectStore::Empty && result != ProjectStore::Loaded) projectResult(result);
   updateProjectDirty();
 }
 
@@ -248,6 +250,8 @@ void updateProjectStorage(){
       projectStore.forget();
       showProjectNotice("STORAGE READY");
     } else showProjectNotice("STORAGE ERROR");
+  } else if(operation == PROJECT_SAVE && projectFiles.uninitialized()) {
+    showProjectNotice("STORAGE NOT SETUP"); // Explicit Fn+C confirmation, never automatic erasure.
   } else if(operation == PROJECT_SAVE) {
     const auto result = projectStore.save(project, confirmed);
     if(result == ProjectStore::Corrupt && !confirmed) projectPrompt = PROJECT_SAVE;

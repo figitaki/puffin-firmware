@@ -433,8 +433,14 @@ playheads to track 1/step 1 and restores tempo; it does not reset external CC
 receiver state (including sustain). Boot restores music only when starting MIDI
 mode, always stopped; there is no demo note in a blank project.
 
-**First use:** an unformatted or unreadable data partition shows `STORAGE ERROR`.
-It is never formatted automatically. Only if you intend to erase that partition,
+**First use:** a fully erased data partition, or a mounted filesystem with no
+saved project, boots directly into an empty pattern without an error notice.
+The whole partition must read as erased (0xFF); nonblank mount failures, read
+errors, corrupt saves and unsupported schemas still report their real errors.
+A healthy saved project also restores silently. Application-only OTA updates do
+not erase project storage. If storage is unformatted, explicit Save shows
+`STORAGE NOT SETUP / FN+C STORAGE SETUP`; no data is formatted automatically.
+Only if you intend to initialize/erase that partition,
 stop playback, press Fn+C, read `ERASE STORAGE? / ALL PROJECTS LOST`, then Fn+V.
 After `STORAGE READY`, press Fn+Z to save your current music. Fn+B cancels. If a
 previous firmware used the partition, back up its contents first. This operation
