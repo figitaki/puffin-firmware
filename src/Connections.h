@@ -122,3 +122,8 @@
 #define LOCK_VALUE_UP  373
 #define LOCK_CLEAR     374
 #define EDIT_DETAILS   375
+#define PROJECT_SAVE   380
+#define PROJECT_LOAD   381
+#define PROJECT_INIT   382
+#define PROJECT_YES    383
+#define PROJECT_CANCEL 384

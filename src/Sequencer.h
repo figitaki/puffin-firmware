@@ -44,7 +44,13 @@ public:
 
     bool setStep(int index, const Step &value) {
         if (index == -1) index = s;
-        if (index < 0 || index >= length || value.count > MaxNotes ||
+        if (index < 0 || index >= length || !validStep(value)) return false;
+        notes[index] = value;
+        return true;
+    }
+
+    static bool validStep(const Step &value) {
+        if (value.count > MaxNotes ||
             value.velocity > 127 || value.chance > 100 || value.lockCount > MaxLocks ||
             !(value.ratchet == 1 || value.ratchet == 2 || value.ratchet == 3 || value.ratchet == 6)) return false;
         for (int i = 0; i < value.count; ++i) {
@@ -57,7 +63,34 @@ public:
             for (int j = 0; j < i; ++j)
                 if (value.locks[i].control == value.locks[j].control) return false;
         }
-        notes[index] = value;
+        return true;
+    }
+
+    // Persistence access is independent of the active playback/edit length.
+    struct State {
+        uint8_t length = StepsPerPage;
+        bool muted = false;
+        Step steps[Capacity];
+    };
+
+    static bool validState(const State &state) {
+        if (state.length < 1 || state.length > Capacity) return false;
+        for (const auto &value : state.steps) if (!validStep(value)) return false;
+        return true;
+    }
+
+    void exportState(State &state) const {
+        state.length = uint8_t(length);
+        state.muted = muted;
+        for (int i = 0; i < Capacity; ++i) state.steps[i] = notes[i];
+    }
+
+    bool replaceState(const State &state) {
+        if (!validState(state)) return false;
+        reset();
+        length = state.length;
+        muted = state.muted;
+        for (int i = 0; i < Capacity; ++i) notes[i] = state.steps[i];
         return true;
     }
 

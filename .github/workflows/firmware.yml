@@ -41,5 +41,9 @@ jobs:
           /tmp/puffin-clock-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/FirmwareUpdate.cpp -o /tmp/puffin-update-tests
           /tmp/puffin-update-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/ProjectSnapshot.cpp -o /tmp/puffin-project-snapshot-tests
+          /tmp/puffin-project-snapshot-tests
+          g++ -O1 -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/ProjectStore.cpp -o /tmp/puffin-project-store-tests
+          /tmp/puffin-project-store-tests
       - name: Build ProS3 firmware
         run: pio run --environment ProS3
