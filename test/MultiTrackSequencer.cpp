@@ -329,7 +329,37 @@ void independentChordsRatchetsAndLocks() {
     assert(seq.getStep(0)->count == 2 && seq.getStep(0)->locks[0].value == 103);
 }
 
+void velocityEditsKeepActiveChordSnapshot() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    seq.setLength(1);
+    seq.setStep(0, 60, 37);
+    seq.setStep(0, 67, 37, true);
+    auto value = *seq.getStep(0);
+    value.ratchet = 2;
+    seq.setStep(0, value);
+    seq.resume(); seq.step();
+    expect({{1,60,37,true},{1,67,37,true}});
+    value.velocity = 112;
+    assert(seq.setStep(seq.editStep(), value));
+    assert(seq.playing() && seq.nextStep() == 0 && seq.editStep() == 0);
+    seq.pulse(); seq.pulse(); seq.pulse();
+    expect({{1,60,0,false},{1,67,0,false},{1,60,37,true},{1,67,37,true}});
+    seq.step();
+    expect({{1,60,0,false},{1,67,0,false},{1,60,112,true},{1,67,112,true}});
+    seq.stop();
+    expect({{1,60,0,false},{1,67,0,false}});
+    // A preset velocity on a rest must not create a pitch or emit a note.
+    seq.clear(0);
+    value = *seq.getStep(0);
+    value.velocity = 127;
+    assert(seq.setStep(0, value));
+    seq.resume(); seq.step(); seq.pulse(); seq.stop();
+    expect({});
+}
+
 int main() {
+    velocityEditsKeepActiveChordSnapshot();
     independentLengthsAndChannels();
     mutePreservesPhaseAndLiveOwner();
     ownershipIsScopedToChannelAndPitch();

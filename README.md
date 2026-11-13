@@ -238,7 +238,8 @@ These are physical key positions, independent of the typing preset or remaps.
 | Left / Right | Previous / next step, wrapping within the selected track |
 | Fn+O / Fn+P | Previous / next 16-step page, wrapping between pages |
 | Fn+Return | Make the selected step the inclusive end of the sequence |
-| Note keys | Audition and write the selected step at velocity 95 |
+| Note keys | Audition and write using the selected step's velocity (95 if unset) |
+| Fn+N / Fn+M | Velocity −1 / +1, clamped to 1–127 |
 | Return | Clear the selected step, including its chord, chance, ratchets, and locks |
 
 Each track remembers its own edit position. The cursor does not advance when
@@ -257,7 +258,7 @@ The shortcut does nothing outside the editor. To extend again, add a page.
 The OLED shows track/mute, current page / total pages, and `>` for running or
 `-` for stopped. The second line shows selected step / sequence length, the
 selected note, chord size (such as `3N`), or `REST`, BPM, and clock source. Notes
-are still entered at the fixed velocity of 95. The 16-step strip shows filled notes, rest
+retain their step's shared velocity when replaced or appended. The 16-step strip shows filled notes, rest
 dots, an outlined edit cursor, and a separate tick for the **next playback
 step** when it is on the current page. That tick is not a sounding-note marker.
 Hollow small squares mark automation-only steps.
@@ -267,7 +268,16 @@ Fn+Q/W/E/R, Fn+T, Fn+Y/U, transport, and Down (output route) retain their
 existing functions. Outside the editor, note keys only record while running
 and Return still clears the next playback step. Outside the editor, recording
 still replaces that step with one note. Edits remain unsaved until an explicit
-project save. There is no velocity/gate editor or undo yet.
+project save. There is no gate editor or undo yet.
+
+Velocity editing selects the `V95` detail view. Empty steps also show `REST`:
+changing velocity does not add notes or send MIDI. An unset/silent velocity of
+zero starts from 95 (N makes 94; M makes 96); further taps change by one. All
+notes in a chord share this velocity. Replacement, chord entry and audition use
+it; performance-mode recording stays at 95. Clearing the step resets it to zero.
+Running edits affect the next visit, not the sounding chord or pending ratchets.
+Velocity is already part of project schema v1 and survives Save/Load, including
+hidden pages; no format migration is required.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -290,7 +300,7 @@ editor (except MIDI Ctrl, which is also a chord-entry toggle inside the editor).
 | Fn+H / Fn+J | Select MIDI CC number −1 / +1 (0–119; starts at 74) |
 | Fn+K / Fn+L | Set/adjust that CC lock value −1 / +1 (0–127) |
 | Fn+semicolon | Remove the selected CC lock from this step |
-| Fn+Backspace | Cycle note, trigger, and CC detail views |
+| Fn+Backspace | Cycle note, trigger, CC, and velocity detail views |
 
 Chord append mode shows `+` before the transport indicator. Tap up to four
 different note keys to build a chord on the selected step, without advancing
