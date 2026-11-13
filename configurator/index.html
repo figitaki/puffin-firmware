@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puffin Configurator</title>
+<style>
+  :root { --bg: #f4f2ee; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dddad3;
+    --accent: #2457d6; --accent-ink: #fff; --override: #f2a93b; --danger: #c0392b; --key: #fbfaf8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 20px 28px 0; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav button { background: none; border: 0; padding: 8px 14px; border-radius: 8px; font: inherit; color: var(--muted); cursor: pointer; }
+  nav button[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px #0001; }
+  main { padding: 20px 28px 40px; max-width: 1100px; }
+  section[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  button.primary, button.secondary, label.secondary { font: inherit; border-radius: 9px; padding: 8px 14px; cursor: pointer; border: 1px solid transparent; }
+  button.primary { background: var(--accent); color: var(--accent-ink); }
+  button.secondary, label.secondary { background: var(--panel); border-color: var(--line); color: var(--ink); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type=text] { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+  .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .message { margin: 12px 0 0; min-height: 1.4em; }
+  .message.error { color: var(--danger); }
+  .board { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; padding: 16px; background: #2b2b2e; border-radius: 14px; margin-top: 16px; }
+  .key { aspect-ratio: 1; min-width: 0; border: 0; border-radius: 8px; background: var(--key); color: var(--ink); font: 600 14px/1.1 system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; text-align: center; padding: 4px; cursor: pointer; position: relative; overflow: hidden; }
+  .key.long { font-size: 11px; font-weight: 500; }
+  .key.overridden::after { content: ""; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--override); }
+  .key.fixed { background: #8d8d93; color: #fff; cursor: not-allowed; }
+  .key.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .board.disabled .key { opacity: .5; pointer-events: none; }
+  .legend { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--override); }
+  .legend span.fixed::before { border-radius: 2px; background: #8d8d93; }
+  .editor h2 { font-size: 16px; margin: 0 0 4px; }
+  .groups { margin-top: 14px; display: grid; gap: 12px; }
+  .groups h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 5px; }
+  .choices button { font: inherit; font-size: 13px; min-width: 36px; padding: 5px 9px; border: 1px solid var(--line); background: var(--key); border-radius: 7px; cursor: pointer; }
+  .choices button.current { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .capture { border: 1px dashed var(--accent); }
+  progress { width: 100%; height: 12px; margin-top: 14px; }
+  ol.steps { margin: 6px 0 14px; padding-left: 20px; }
+  ol.steps li { margin: 4px 0; }
+  #pin { width: 13ch; letter-spacing: .3em; font-variant-numeric: tabular-nums; }
+  .unsupported { background: #fff4e5; border: 1px solid #f3d19e; color: #6b4a12; padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Puffin Configurator</h1>
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-tab="keymap">Keymap</button>
+    <button role="tab" aria-selected="false" data-tab="firmware">Firmware update</button>
+  </nav>
+</header>
+<main>
+  <section id="keymap">
+    <div class="unsupported" id="no-serial" hidden>This browser can’t talk to Puffin over USB. Use Chrome or Edge on a desktop computer.</div>
+    <div class="card">
+      <div class="row">
+        <button class="primary" id="connect">Connect Puffin over USB</button>
+        <label for="preset">Base layout</label>
+        <select id="preset" disabled></select>
+        <span class="spacer"></span>
+        <button class="secondary" id="export" disabled>Export</button>
+        <label class="secondary" id="import-label" aria-disabled="true">Import<input type="file" id="import" accept=".json,application/json" hidden disabled></label>
+        <button class="secondary" id="clear" disabled>Reset all keys</button>
+      </div>
+      <p class="note">Plug Puffin into this computer’s USB port and keep it in typing mode. Changes save on Puffin straight away; there’s nothing to flash. Set your computer’s keyboard input to US/QWERTY.</p>
+      <p class="message" id="keymap-message" role="status"></p>
+      <div class="board disabled" id="board" aria-label="Puffin keys"></div>
+      <div class="legend"><span>Changed from the base layout</span><span class="fixed">Fn (fixed so you can always recover)</span></div>
+    </div>
+    <div class="card editor" id="editor" hidden>
+      <div class="row">
+        <div>
+          <h2 id="editor-title">Key</h2>
+          <div class="note" id="editor-detail"></div>
+        </div>
+        <span class="spacer"></span>
+        <button class="secondary capture" id="capture">Press a key to assign…</button>
+        <button class="secondary" id="reset-key">Use base layout</button>
+      </div>
+      <div class="groups" id="groups"></div>
+    </div>
+  </section>
+
+  <section id="firmware" hidden>
+    <div class="unsupported" id="no-bluetooth" hidden>This browser can’t use Bluetooth. Use Chrome or Edge on a desktop or Android, or the Puffin Updater app on iPhone and iPad.</div>
+    <div class="card">
+      <ol class="steps">
+        <li>Choose a ProS3 application <code>firmware.bin</code>.</li>
+        <li>Hold <b>Fn</b> + <b>↑</b> while resetting Puffin. Its display shows a six-digit PIN.</li>
+        <li>Connect, enter the PIN and keep this page open until Puffin restarts.</li>
+      </ol>
+      <div class="row">
+        <label class="secondary">Choose firmware…<input type="file" id="image" accept=".bin" hidden></label>
+        <span id="image-name" class="note" style="margin:0">No file chosen</span>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="secondary" id="ble-connect" disabled>Connect to Puffin</button>
+        <label for="pin">PIN</label>
+        <input type="text" id="pin" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" disabled>
+        <button class="primary" id="install" disabled>Install</button>
+        <button class="secondary" id="ble-cancel" disabled>Cancel</button>
+      </div>
+      <progress id="progress" value="0" max="1" hidden></progress>
+      <p class="message" id="firmware-message" role="status"></p>
+      <p class="note">This checks the file and Puffin verifies the SHA-256 digest and image before switching to it. It does not check who published the firmware, so only install builds you trust. Your keymap and projects are kept.</p>
+    </div>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

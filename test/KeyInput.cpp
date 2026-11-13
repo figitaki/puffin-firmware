@@ -251,7 +251,7 @@ void typingPresetsPreserveNonTypingBindings() {
     assert(layout.selected() == TypingLayout::Qwerty);
     const char *expected[][3] = {
         {"qwertyuiop", "asdfghjkl;", "zxcvbnm,./"},
-        {"qwfpgjluy;", "arstdhneio", "zxcvbkm,./"},
+        {"qwfpbjluy;", "arstgmneio", "zxcdvkh,./"},
         {"',.pyfgcrl", "aoeuidhtns", ";qjkxbmwvz"}
     };
     // Return to QWERTY after both alternatives, not just from initialization.

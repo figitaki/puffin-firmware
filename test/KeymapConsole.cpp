@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <stdio.h>
+#include <sstream>
 #include <string>
+#include <vector>
 #include "KeymapConsole.h"
 
 struct Keyboard {
@@ -142,10 +144,47 @@ void remappedHeldKeysReleaseOriginalActions() {
     edge(true, 40, 'f');
 }
 
+std::vector<std::string> dumpTokens(Keyboard &keyboard) {
+    assert(keyboard.command("keymap dump\n") == KeymapConsole::Dump);
+    char line[KeymapConsole::DumpSize];
+    keyboard.console.dump(line);
+    std::vector<std::string> tokens;
+    std::istringstream words(line);
+    for (std::string word; words >> word;) tokens.push_back(word);
+    assert(tokens.size() == 63 && tokens[0] == "keymap" && tokens[1] == "dump");
+    return tokens;
+}
+
+void presetsAndDumpsDescribeTheWholeBaseLayer() {
+    Keyboard keyboard;
+    assert(keyboard.command("keymap preset\n") == KeymapConsole::Value);
+    assert(keyboard.console.value() == TypingLayout::Qwerty);
+    assert(keyboard.command("keymap set 1 3 120\n") == KeymapConsole::Changed);
+    assert(keyboard.command("keymap preset 2 \n") == KeymapConsole::PresetChanged);
+    assert(keyboard.command("keymap preset 2\n") == KeymapConsole::Okay);
+    const char *invalid[] = {"keymap preset 3", "keymap preset -1", "keymap preset 1 1", "keymap preset x"};
+    for (const auto text : invalid) {
+        assert(keyboard.command(std::string(text) + "\n") == KeymapConsole::Error);
+    }
+    assert(keyboard.layout.selected() == TypingLayout::Dvorak);
+    auto tokens = dumpTokens(keyboard);
+    auto at = [&](int row, int col) { return tokens[3 + row * ColCount + col]; };
+    assert(tokens[2] == "2");
+    int unfitted = 0;
+    for (size_t i = 3; i < tokens.size(); ++i) unfitted += tokens[i] == "-";
+    assert(unfitted == RowCount * ColCount - 51 && at(0, 0) == "-" && at(4, 3) == "-");
+    assert(at(1, 3) == "120*" && at(1, 2) == "44" && at(4, 8) == "256" && at(3, 11) == "122");
+    assert(keyboard.command("keymap reset 1 3\n") == KeymapConsole::Changed);
+    tokens = dumpTokens(keyboard);
+    assert(at(1, 3) == "46");
+    assert(keyboard.command("keymap dump extra\n") == KeymapConsole::Error);
+}
+
 int main() {
     editsFollowPositionsAcrossPresets();
     invalidCommandsAreAtomicAndStreamRecovers();
     persistedRecordsAreValidatedBeforeApplication();
     remappedHeldKeysReleaseOriginalActions();
+    presetsAndDumpsDescribeTheWholeBaseLayer();
     puts("Keymap console and persistence regression tests passed");
 }

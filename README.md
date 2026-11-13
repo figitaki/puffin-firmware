@@ -23,6 +23,29 @@ GitHub Actions builds the ProS3 target on pushes and pull requests. A successful
 build checks compilation and linking, not electrical behavior, BLE pairing,
 matrix scanning, or MIDI timing; those still need testing on the actual board.
 
+## Configurator
+
+[`configurator/`](configurator/) is a static web page for changing the keymap
+over USB and installing firmware over Bluetooth, with no install or build step.
+Serve the folder over HTTPS (or `localhost`) and open it in Chrome or Edge, for
+example `python3 -m http.server -d configurator`, then `http://localhost:8000`.
+
+- **Keymap:** connect Puffin by USB in typing mode, then choose the base layout
+  and click keys to reassign them, or press the key you want. It uses the serial
+  commands below, so changes save on the board immediately and nothing is
+  flashed. Export and Import share a layout as JSON (the preset plus overrides).
+  A fresh board with no saved changes stays QWERTY.
+- **Firmware update:** the same BLE maintenance protocol as the iOS app, using
+  Web Bluetooth (desktop Chrome/Edge or Android Chrome; iOS Safari has no Web
+  Bluetooth, so use the iOS app there). Choose a ProS3 application
+  `firmware.bin`, enter maintenance mode as described below, then connect and
+  enter the PIN. The page checks the image like the app does; the board checks
+  the SHA-256 digest and image before switching to it.
+
+Both still need testing on a physical Puffin. Web Bluetooth cannot read the
+connection MTU, so 180-byte data writes rely on the browser negotiating a large
+MTU or falling back to long writes.
+
 ## Development Bluetooth firmware updater
 
 The native [iPhone/iPad updater](ios/PuffinUpdater/README.md) provides a consumer
@@ -92,8 +115,10 @@ debounce interval and GPIO settling delay still need confirmation on hardware.
 ## Alternative typing layouts
 
 QWERTY is the default. In typing mode, hold Fn, then GUI, and press the physical
-Q, W, or E position to choose QWERTY, standard Colemak (not Colemak-DH), or Dvorak,
-respectively. These shortcuts are position-based even after changing layouts.
+Q, W, or E position to choose QWERTY, Colemak-DH, or Dvorak, respectively.
+The Colemak-DH preset matches the base layer of the `figitaki` Corne keymap
+(`keyboards/crkbd/keymaps/figitaki` in figitaki/qmk_firmware), without its
+home-row mod-taps. These shortcuts are position-based even after changing layouts.
 They replace the redundant left-side 1/2/3 bindings in the number-pad layer;
 the right-side number pad and the normal Fn number row remain available.
 
@@ -131,6 +156,13 @@ layers even if the base GUI key is remapped.
 | `keymap set ROW COL ACTION` | Set a position override |
 | `keymap reset ROW COL` | Remove one override, inheriting the selected preset |
 | `keymap clear` | Remove every override without changing the preset |
+| `keymap preset` | Read the selected preset: 0 QWERTY, 1 Colemak-DH, 2 Dvorak |
+| `keymap preset N` | Select and save preset N, like Fn+GUI+Q/W/E |
+| `keymap dump` | Read the whole base layer on one line |
+
+`keymap dump` replies `keymap dump PRESET` followed by 60 row-major tokens: `-`
+for a position with no switch, otherwise the decimal action, ending in `*` when
+it is a user override.
 
 For example, `keymap set 1 1 97` makes the physical Q position send lowercase A.
 `keymap reset 1 1` returns it to the selected preset. Actions are decimal:
