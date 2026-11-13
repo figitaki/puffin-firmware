@@ -28,6 +28,9 @@ public:
     Failure error() const { return failure; }
     uint32_t written() const { return received; }
     uint32_t total() const { return expected; }
+    bool streaming() const { return stream; }
+    bool progressDue() const { return !stream || packetsSinceStatus >= 8 || received == expected; }
+    void progressPublished() { packetsSinceStatus = 0; }
 
     static uint32_t read32(const uint8_t *data) {
         return uint32_t(data[0]) | uint32_t(data[1]) << 8 |
@@ -64,6 +67,8 @@ public:
                 current = Authorized;
                 lastActivity = now;
             }
+        } else if (data[0] == 6 && size == 1 && current == Authorized) {
+            stream = true; // Explicit opt-in; old clients keep per-packet acknowledgments.
         } else if (data[0] == 3 && size == 18 && current == Authorized && data[1] < 2) {
             memcpy(digest + data[1] * 16, data + 2, 16);
             digestParts |= uint8_t(1 << data[1]);
@@ -84,12 +89,13 @@ public:
     void data(const uint8_t *bytes, size_t size, uint32_t now) {
         poll(now);
         if (current == Complete || current == Error) return;
-        if (current != Receiving || size < 5 || size > 180) { fail(Protocol); return; }
+        if (current != Receiving || size < 5 || size > (stream ? 512U : 180U)) { fail(Protocol); return; }
         if (read32(bytes) != received) { fail(Offset); return; }
         const size_t count = size - 4;
         if (count > expected - received) { fail(Size); return; }
         if (!storage.write(bytes + 4, count)) { fail(Flash); return; }
         received += uint32_t(count);
+        if (packetsSinceStatus < 8) ++packetsSinceStatus;
         lastActivity = now;
     }
 
@@ -105,7 +111,8 @@ private:
     State current = Ready;
     Failure failure = None;
     char code[6];
-    uint8_t digest[32] = {}, digestParts = 0, attempts = 0;
+    uint8_t digest[32] = {}, digestParts = 0, attempts = 0, packetsSinceStatus = 0;
+    bool stream = false;
     uint32_t expected = 0, received = 0, openedAt, lastActivity;
 
     void reset() {
@@ -113,7 +120,8 @@ private:
         current = Ready;
         failure = None;
         expected = received = 0;
-        digestParts = 0;
+        digestParts = packetsSinceStatus = 0;
+        stream = false;
     }
 
     void fail(Failure value) {

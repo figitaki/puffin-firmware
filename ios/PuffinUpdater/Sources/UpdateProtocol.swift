@@ -19,6 +19,7 @@ enum UpdateProtocol {
         return Data([1] + bytes)
     }
 
+    static let enableStreaming = Data([6])
     static func begin(size: UInt32) -> Data { Data([2]) + uint32(size) }
     static func digest(_ digest: Data, half: Int) -> Data {
         precondition(digest.count == 32 && (0...1).contains(half))
@@ -99,6 +100,52 @@ struct WriteGate {
     mutating func retireIfReady() -> Bool {
         guard !retired, acknowledged, expectedState == nil || observed else { return false }
         retired = true
+        return true
+    }
+}
+
+/// The production streaming cursor. Queued bytes are not committed bytes: only
+/// an exact cumulative window acknowledgment opens the next window (or Finish).
+struct TransferWindow {
+    static let packetLimit = 8
+    let total: UInt32
+    let payloadCapacity: Int
+    private(set) var sent: UInt32 = 0
+    private(set) var acknowledged: UInt32 = 0
+    private(set) var packetsInWindow = 0
+
+    init(total: UInt32, maximumWriteLength: Int) throws {
+        guard total > 0, maximumWriteLength > 4 else {
+            throw UpdateFailure("Bluetooth streaming write capacity is too small.")
+        }
+        self.total = total
+        payloadCapacity = min(512, maximumWriteLength) - 4
+    }
+
+    var awaitingAcknowledgment: Bool { packetsInWindow == Self.packetLimit || sent == total }
+    var canFinish: Bool { acknowledged == total }
+
+    mutating func nextPacket(canSend: Bool) -> Range<Int>? {
+        guard canSend, !awaitingAcknowledgment else { return nil }
+        let start = Int(sent)
+        let end = min(start + payloadCapacity, Int(total))
+        sent = UInt32(end)
+        packetsInWindow += 1
+        return start..<end
+    }
+
+    /// Duplicate/stale committed progress is harmless. New progress must be the
+    /// exact end of a fully queued window, never an intermediate or future offset.
+    mutating func observe(_ status: BoardStatus) throws -> Bool {
+        guard status.state == .receiving, status.error == .none, status.total == total else {
+            throw UpdateFailure("Unexpected streaming status from Puffin. Transfer stopped.")
+        }
+        if status.written <= acknowledged { return false }
+        guard awaitingAcknowledgment, status.written == sent else {
+            throw UpdateFailure("Unexpected streaming offset from Puffin. Transfer stopped.")
+        }
+        acknowledged = sent
+        packetsInWindow = 0
         return true
     }
 }
