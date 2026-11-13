@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdio.h>
 #include <string.h>
 #include "TypingLayout.h"
 
@@ -7,10 +8,25 @@
 // belong to the caller, which must only feed this console in typing mode.
 class KeymapConsole {
 public:
-    enum Result { None, Changed, Okay, Value, Error };
+    enum Result { None, Changed, PresetChanged, Okay, Value, Dump, Error };
+    // "keymap dump PRESET" then 60 row-major tokens: "-" for an unfitted
+    // switch, else the decimal action with "*" when it is a user override.
+    static const size_t DumpSize = 16 + RowCount * ColCount * 5;
     explicit KeymapConsole(TypingLayout &layout) : layout(layout) {}
 
     int value() const { return lastValue; }
+
+    void dump(char (&out)[DumpSize]) const {
+        size_t used = snprintf(out, DumpSize, "keymap dump %d", layout.selected());
+        for (int row = 0; row < RowCount; ++row) {
+            for (int col = 0; col < ColCount; ++col) {
+                const int action = layout.actionAt(row, col);
+                if (action < 0) used += snprintf(out + used, DumpSize - used, " -");
+                else used += snprintf(out + used, DumpSize - used, " %d%s", action,
+                                      layout.overrideAt(row, col) >= 0 ? "*" : "");
+            }
+        }
+    }
 
     Result feed(char byte) {
         if (byte == '\r' || byte == '\n') {
@@ -50,6 +66,20 @@ private:
     Result execute() {
         if (!strcmp(line, "keymap clear")) {
             return layout.clearOverrides() ? Changed : Okay;
+        }
+        if (!strcmp(line, "keymap dump")) return Dump;
+        if (!strcmp(line, "keymap preset")) {
+            lastValue = layout.selected();
+            return Value;
+        }
+        if (!strncmp(line, "keymap preset ", 14)) {
+            const char *cursor = line + 14;
+            const int preset = number(cursor);
+            while (*cursor == ' ') ++cursor;
+            if (*cursor || preset < 0 || preset >= TypingLayout::Count) return Error;
+            if (preset == layout.selected()) return Okay;
+            layout.select(preset);
+            return PresetChanged;
         }
         const bool set = !strncmp(line, "keymap set ", 11);
         const bool reset = !strncmp(line, "keymap reset ", 13);

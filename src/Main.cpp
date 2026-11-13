@@ -205,6 +205,11 @@ void sendTypingReport() {
   Kbd.sendReport(&report);
 }
 
+bool saveTypingPreset() {
+  return typingPreferencesReady &&
+    typingPreferences.putUChar("layout", typingLayout.selected()) == 1;
+}
+
 void updateKeymapConsole() {
 #if ARDUINO_USB_CDC_ON_BOOT
   // ProS3 Serial is native USB CDC, not the Serial0 MIDI UART. Never read it
@@ -218,6 +223,12 @@ void updateKeymapConsole() {
       const bool saved = typingPreferencesReady &&
         typingPreferences.putBytes("remap", record, sizeof(record)) == sizeof(record);
       Serial.println(saved ? "keymap saved" : "keymap session-only: save failed");
+    } else if(result == KeymapConsole::PresetChanged) {
+      Serial.println(saveTypingPreset() ? "keymap saved" : "keymap session-only: save failed");
+    } else if(result == KeymapConsole::Dump) {
+      static char line[KeymapConsole::DumpSize];
+      keymapConsole.dump(line);
+      Serial.println(line);
     } else if(result == KeymapConsole::Okay) {
       Serial.println("keymap unchanged");
     } else if(result == KeymapConsole::Value) {
@@ -285,8 +296,7 @@ void handleKeyEvent(const KeyInput::Event &event) {
     case LAYOUT_DVORAK:
       if(event.pressed && action - LAYOUT_QWERTY != typingLayout.selected()) {
         typingLayout.select(action - LAYOUT_QWERTY);
-        if(!typingPreferencesReady ||
-           typingPreferences.putUChar("layout", typingLayout.selected()) != 1) {
+        if(!saveTypingPreset()) {
           Serial.println("Typing layout changed for this session, but could not be saved");
         }
       }
