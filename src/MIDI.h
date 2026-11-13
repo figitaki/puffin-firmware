@@ -19,6 +19,7 @@
 #include "Clock.h"
 #include "MultiTrackSequencer.h"
 #include "ProjectStorage.h"
+#include "PatternSync.h"
 #include <esp_system.h>
 #include <Control_Surface.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
@@ -68,6 +69,8 @@ MultiTrackSequencer seq(noteOutput, esp_random);
 LittleFSProjectFiles projectFiles;
 ProjectStore projectStore(projectFiles);
 ProjectSnapshot project;
+PatternSync patternSync;
+PatternSync::Reply patternReply;
 bool projectDirty = true, projectBusy = false, projectChanged = false;
 bool projectTransportPaused = false;
 int projectPending = 0, projectPrompt = 0;
@@ -82,6 +85,7 @@ void showProjectNotice(const char *text) {
 void updateProjectDirty() {
   project.capture(seq, uint16_t(clk.internalBPM()), uint8_t(clk.swing()));
   projectDirty = projectStore.dirty(project);
+  patternSync.observe(project);
 }
 
 void projectResult(ProjectStore::Result result) {
@@ -98,12 +102,19 @@ void projectResult(ProjectStore::Result result) {
   }
 }
 
-// Channel/SysEx traffic retains the existing bidirectional bridge. Only the
+// Channel/unrelated SysEx traffic retains the bidirectional bridge; PF pattern
+// requests are consumed locally and replies return to their ingress. Only the
 // selected clock input may forward transport, preventing competing masters
 // from leaking a second clock into the generated internal-clock output.
 class ClockInputPipe : public MIDI_Pipe {
 public:
   explicit ClockInputPipe(Clock::Source source) : source(source) {}
+  void mapForwardMIDI(SysExMessage message) override {
+    if(message.isFirstChunk()) suppressPattern = PatternSync::addressed(message.data, message.length);
+    const bool suppress = suppressPattern;
+    if(message.isLastChunk()) suppressPattern = false;
+    if(!suppress) sourceMIDItoSink(message);
+  }
   void mapForwardMIDI(RealTimeMessage message) override {
     if(projectBusy || projectTransportPaused) return;
     switch(message.getMessageType()) {
@@ -119,6 +130,7 @@ public:
   }
 private:
   Clock::Source source;
+  bool suppressPattern = false;
 };
 
 ClockInputPipe bleToSerial(Clock::BLE), serialToBle(Clock::TRS);
@@ -494,6 +506,26 @@ void processMIDIRelease(int function){
 
 // Custom MIDI callback that prints incoming messages.
 struct MyMIDI_Callbacks : MIDI_Callbacks {
+  void onSysExMessage(MIDI_Interface &input, SysExMessage message) override {
+    if(projectBusy || !message.isCompleteMessage() ||
+       !PatternSync::addressed(message.data, message.length)) return;
+    updateProjectDirty();
+    PatternSync::Status status;
+    status.running = clk.running() || seq.playing();
+    status.clockSource = uint8_t(clk.source());
+    for(int i = 0; i < 4; ++i) status.positions[i] = uint8_t(seq.nextStep(i));
+    patternSync.receive(message.data, message.length, &input == &midi_ble ? 0 : 1,
+                        millis(), project, status, patternReply);
+    if(patternReply.appliedTrack >= 0) {
+      seq.replaceTrack(patternReply.appliedTrack, project.tracks[patternReply.appliedTrack]);
+      projectPrompt = 0;
+      updateProjectDirty();
+    }
+    if(patternReply.size) {
+      input.sendSysEx(patternReply.bytes, uint16_t(patternReply.size), message.cable);
+      input.sendNow();
+    }
+  }
  
   // Callback for channel messages (notes, control change, pitch bend, etc.).
   void onChannelMessage(MIDI_Interface &, ChannelMessage cm) override {

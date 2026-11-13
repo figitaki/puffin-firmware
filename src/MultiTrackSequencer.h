@@ -29,6 +29,18 @@ public:
         return true;
     }
 
+    // Remote commits are stopped-only and must not disturb other tracks or selection.
+    bool replaceTrack(int index, const Sequencer::State &state) {
+        if (playing() || index < 0 || index >= TrackCount || !Sequencer::validState(state)) return false;
+        tracks[index].replaceState(state, true);
+        if (editSteps[index] >= state.length) editSteps[index] = state.length - 1;
+        return true;
+    }
+
+    int nextStep(int index) const {
+        return index >= 0 && index < TrackCount ? tracks[index].s : -1;
+    }
+
     template <typename State>
     bool replaceTracks(const State (&states)[TrackCount]) {
         for (const auto &state : states)

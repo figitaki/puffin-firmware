@@ -108,6 +108,10 @@ void setup() {
   if(midiMode){
 
     setupSequencer();
+    updateProjectDirty();
+    uint8_t syncNonce[8];
+    esp_fill_random(syncNonce, sizeof(syncNonce));
+    patternSync.begin(syncNonce, project);
     // MIDI 
     // Change the name of the BLE device (must be done before initializing it)
     std::string newName = std::string("Puffin MIDI []").insert(13, std::string(1, ('A' + getMacDevice())));

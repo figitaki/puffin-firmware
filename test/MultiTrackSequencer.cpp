@@ -373,7 +373,30 @@ void gatesAreIndependentAcrossTracks() {
     seq.pulse(); seq.stop(); expect({});
 }
 
+void remoteTrackReplacementPreservesStoppedState() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    seq.selectTrack(2); seq.selectStep(15);
+    seq.resume(); seq.step(); seq.step(); seq.stop();
+    Sequencer::State state;
+    seq.exportTrack(2, state);
+    state.steps[63].count = 1; state.steps[63].notes[0] = 79; state.steps[63].velocity = 93;
+    output.press(79, 71, 3); expect({{3,79,71,true}});
+    assert(seq.replaceTrack(2, state));
+    assert(seq.nextStep(2) == 2 && seq.nextStep(1) == 2 && seq.editStep() == 15);
+    assert(seq.selectedTrack() == 2 && !seq.playing()); expect({});
+    state.length = 7;
+    assert(seq.replaceTrack(2, state));
+    assert(seq.nextStep(2) == 0 && seq.nextStep(1) == 2 && seq.editStep() == 6);
+    seq.exportTrack(2, state); assert(state.steps[63].notes[0] == 79);
+    state.length = 0; assert(!seq.replaceTrack(2, state));
+    state.length = 7; seq.resume(); assert(!seq.replaceTrack(2, state)); seq.stop();
+    assert(!seq.replaceTrack(4, state) && !seq.replaceTrack(-1, state));
+    output.release(79, 3); expect({{3,79,0,false}});
+}
+
 int main() {
+    remoteTrackReplacementPreservesStoppedState();
     gatesAreIndependentAcrossTracks();
     velocityEditsKeepActiveChordSnapshot();
     independentLengthsAndChannels();

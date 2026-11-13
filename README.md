@@ -507,6 +507,16 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isr
 /tmp/puffin-clock-tests
 ```
 
+## Pattern synchronization (experimental)
+
+BLE/TRS MIDI SysEx now supports a revision-checked first-note/velocity pattern
+projection: four tracks, all 64 stored slots, 16-step pages and arbitrary set-end
+lengths. Staged writes commit only while stopped and preserve existing chords,
+chance, ratchets, gates and CC locks. They edit RAM, not flash. This is a
+single-companion adapter, not full-pattern backup or network peer sync.
+See [the wire contract and interoperability harness](docs/pattern-sysex.md)
+for capabilities, retry limits, projection semantics and hardware-test gaps.
+
 ## Display scheduling
 
 The loop sends the 128 x 32 OLED framebuffer incrementally: one address command,
