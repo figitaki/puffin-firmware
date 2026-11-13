@@ -17,7 +17,7 @@ void exactTempoAndWrap() {
             const auto tick = clock.poll(origin + elapsed);
             assert(tick != Clock::Overrun);
             if (tick == Clock::Step) ++steps;
-            if (tick == Clock::Step || tick == Clock::Pulse) ++pulses;
+            if ((tick == Clock::Step || tick == Clock::Pulse) && clock.midiPulse()) ++pulses;
         }
         assert(pulses == bpm * 24 && steps == bpm * 4);
         assert(clock.poll(origin + 60000000) == Clock::Step);
@@ -32,25 +32,25 @@ void tempoChangeAndStallBoundary() {
     assert(clock.getBPM() == 120);
     clock.start(0);
     assert(clock.poll(0) == Clock::Step);
-    // Half a clock at 120 BPM, then double tempo: keep that half's phase.
-    assert(clock.setBPM(240, 10000));
-    assert(clock.poll(15416) == Clock::None);
-    assert(clock.poll(15417) == Clock::Pulse);
+    // Partial 48-PPQN tick at 120 BPM, then double tempo: retain its credit.
+    assert(clock.setBPM(240, 5000));
+    assert(clock.poll(7708) == Clock::None);
+    assert(clock.poll(7709) == Clock::Pulse && !clock.midiPulse());
 
-    assert(clock.setBPM(120, 20000));
-    clock.start(20000);
-    assert(clock.poll(20000) == Clock::Step);
-    assert(clock.poll(61666) == Clock::Pulse); // Just less than 2 overdue.
-    clock.start(100000);
-    assert(clock.poll(100000) == Clock::Step);
-    assert(clock.poll(141667) == Clock::Overrun);
+    assert(clock.setBPM(120, 10000));
+    clock.start(10000);
+    assert(clock.poll(10000) == Clock::Step);
+    assert(clock.poll(30833) == Clock::Pulse); // Just less than 2 overdue ticks.
+    clock.start(50000);
+    assert(clock.poll(50000) == Clock::Step);
+    assert(clock.poll(70834) == Clock::Overrun);
     assert(!clock.running());
-    assert(clock.poll(141668) == Clock::None);
-    assert(clock.resume(150000));
-    assert(!clock.resume(150000));
-    assert(clock.poll(150000) == Clock::Pulse); // Continue retains pulse phase.
-    clock.start(160000);
-    assert(clock.poll(160000) == Clock::Step); // Start resets it.
+    assert(clock.poll(70835) == Clock::None);
+    assert(clock.resume(75000));
+    assert(!clock.resume(75000));
+    assert(clock.poll(75000) == Clock::Pulse && !clock.midiPulse()); // Retained half-clock phase.
+    clock.start(80000);
+    assert(clock.poll(80000) == Clock::Step && clock.midiPulse());
 }
 
 void externalTempoTransportAndTimeout() {
@@ -117,7 +117,55 @@ void externalTempoKeepsLastValidEstimate() {
     }
 }
 
+void swingPairsKeepWireClockStraight() {
+    for (int swing : {0, 1, 2}) for (int bpm : {20, 137, 300}) {
+        Clock clock;
+        const uint32_t origin = UINT32_MAX - 4000U;
+        assert(!clock.setSwing(-1) && !clock.setSwing(3));
+        assert(clock.setSwing(swing) && clock.swing() == swing);
+        clock.setBPM(bpm, origin); clock.start(origin);
+        const int longStep = swing == 0 ? 12 : swing == 1 ? 14 : 16;
+        for (int i = 0; i <= 96; ++i) {
+            const uint32_t deadline = uint32_t((60000000ULL * i + bpm * 48 - 1) / (bpm * 48));
+            if (i) assert(clock.poll(origin + deadline - 1) == Clock::None);
+            const auto tick = clock.poll(origin + deadline);
+            assert(tick == (i % 24 == 0 || i % 24 == longStep ? Clock::Step : Clock::Pulse));
+            assert(clock.midiPulse() == (i % 2 == 0));
+            assert(clock.pulseScale() == 2);
+            if (tick == Clock::Step)
+                assert(clock.stepDuration() == (i % 24 == 0 ? longStep : 24 - longStep));
+        }
+    }
+    for (auto source : {Clock::BLE, Clock::TRS}) {
+        Clock clock; clock.setSwing(2); clock.setSource(source); clock.start(0);
+        for (int i = 0; i < 48; ++i) {
+            assert(clock.externalPulse(i * 19000) == (i % 6 == 0 ? Clock::Step : Clock::Pulse));
+            assert(clock.midiPulse() && clock.pulseScale() == 1 && clock.stepDuration() == 6);
+        }
+        assert(clock.swing() == 2); // Stored preference survives external bypass.
+    }
+}
+
+void swingChangesLatchAtPairBoundary() {
+    Clock clock; clock.setBPM(125, 0); clock.start(0); // Exactly 10000 us/tick.
+    assert(clock.poll(0) == Clock::Step && clock.stepDuration() == 12);
+    clock.setSwing(2);
+    for (int i = 1; i < 24; ++i)
+        assert(clock.poll(i * 10000) == (i == 12 ? Clock::Step : Clock::Pulse));
+    assert(clock.poll(240000) == Clock::Step && clock.stepDuration() == 16);
+    clock.setSwing(0);
+    clock.stop(); clock.resume(250000);
+    assert(clock.poll(250000) == Clock::Pulse && !clock.midiPulse());
+    for (int i = 2; i < 24; ++i)
+        assert(clock.poll(240000 + i * 10000) == (i == 16 ? Clock::Step : Clock::Pulse));
+    assert(clock.poll(480000) == Clock::Step && clock.stepDuration() == 12);
+    clock.setSwing(1); clock.start(500000);
+    assert(clock.poll(500000) == Clock::Step && clock.stepDuration() == 14);
+}
+
 int main() {
+    swingPairsKeepWireClockStraight();
+    swingChangesLatchAtPairBoundary();
     exactTempoAndWrap();
     tempoChangeAndStallBoundary();
     externalTempoTransportAndTimeout();

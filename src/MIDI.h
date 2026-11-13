@@ -42,7 +42,7 @@ bool bridgeBLEtoSER = true;
 bool serialOutput = false;
 bool stepEditing = false;
 bool chordEntry = false;
-enum StepView { StepNotes, StepTrigger, StepControl, StepVelocity, StepGate };
+enum StepView { StepNotes, StepTrigger, StepControl, StepVelocity, StepGate, StepSwing };
 StepView stepView = StepNotes;
 uint8_t editControl = 74; // MIDI brightness/filter cutoff by convention.
 bool stepFull = false;
@@ -80,7 +80,7 @@ void showProjectNotice(const char *text) {
 }
 
 void updateProjectDirty() {
-  project.capture(seq, uint16_t(clk.internalBPM()));
+  project.capture(seq, uint16_t(clk.internalBPM()), uint8_t(clk.swing()));
   projectDirty = projectStore.dirty(project);
 }
 
@@ -155,8 +155,8 @@ void updateSequencerClock(){
   const Clock::Tick tick = clk.poll(micros());
   if(tick == Clock::Overrun) { stopTransport(true); return; }
   if(tick == Clock::None) return;
-  midi_out->sendRealTime(MIDIMessageType::TimingClock);
-  if(tick == Clock::Step) seq.step();
+  if(clk.midiPulse()) midi_out->sendRealTime(MIDIMessageType::TimingClock);
+  if(tick == Clock::Step) seq.step(clk.stepDuration(), clk.pulseScale());
   else seq.pulse();
   midi_out->sendNow();
 }
@@ -184,6 +184,7 @@ void setupSequencer(){
   if(result == ProjectStore::Loaded || result == ProjectStore::Recovered) {
     project.apply(seq);
     clk.setBPM(project.bpm, micros());
+    clk.setSwing(project.swing);
   }
   projectResult(result);
   updateProjectDirty();
@@ -245,6 +246,7 @@ void updateProjectStorage(){
       project.apply(seq);
       clk.setSource(clk.source()); // Reset phase, retaining the device's source.
       clk.setBPM(project.bpm, micros());
+      clk.setSwing(project.swing);
       chordEntry = false;
       stepView = StepNotes;
       stepFull = false;
@@ -367,7 +369,14 @@ void processMIDIPress(int function){
       stepFull = false;
       break;
     case EDIT_DETAILS:
-      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 5);
+      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 6);
+      break;
+    case SWING_CYCLE:
+      if(stepEditing) {
+        clk.setSwing((clk.swing() + 1) % 3);
+        stepFull = false;
+        stepView = StepSwing;
+      }
       break;
     case GATE_DOWN:
     case GATE_UP:
@@ -502,7 +511,7 @@ struct MyMIDI_Callbacks : MIDI_Callbacks {
     switch(rt.getMessageType()){
       case MIDIMessageType::TimingClock:
         switch(clk.externalPulse(micros())) {
-          case Clock::Step: seq.step(); midi_out->sendNow(); break;
+          case Clock::Step: seq.step(clk.stepDuration(), clk.pulseScale()); midi_out->sendNow(); break;
           case Clock::Pulse: seq.pulse(); midi_out->sendNow(); break;
           case Clock::Overrun: stopTransport(true); break;
           default: break;

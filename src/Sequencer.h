@@ -129,11 +129,15 @@ public:
         if (index >= 0 && index < length) notes[index] = Step{};
     }
 
-    void step() {
+    // duration/scale come from the clock: 6/1 externally, 8–16/2 internally.
+    void step(uint8_t duration = 6, uint8_t scale = 1) {
         if (!play) return;
         releaseNote();
         triggered = false;
         pulsePhase = 0;
+        stepDuration = duration;
+        pulseScale = scale;
+        nextRatchet = 1;
         const Step &value = notes[s];
         if (!muted && value.chance && (value.chance == 100 || roll() < value.chance)) {
             activeStep = value; // Running edits affect the next visit, not pending ratchets.
@@ -145,15 +149,17 @@ public:
         s = (s + 1) % length;
     }
 
-    // Five non-step pulses follow each step at 24 PPQN. Ratchets divide these
-    // six pulse slots exactly, independent of tempo and clock source.
+    // Ratchet hits divide the current span, rounding toward the earlier tick.
+    // At 48 PPQN even the shortest swung span has room for all six hits.
     void pulse() {
-        if (!play || pulsePhase >= 5) return;
+        if (!play || pulsePhase + 1 >= stepDuration) return;
         ++pulsePhase;
-        if (sounding && ++gateAge >= activeStep.gate) releaseNote();
-        if (triggered && pulsePhase % (6 / activeStep.ratchet) == 0) {
+        if (sounding && ++gateAge >= activeStep.gate * pulseScale) releaseNote();
+        if (triggered && nextRatchet < activeStep.ratchet &&
+            pulsePhase == nextRatchet * stepDuration / activeStep.ratchet) {
             releaseNote();
             pressNote();
+            ++nextRatchet;
         }
     }
 
@@ -187,6 +193,7 @@ private:
     Step activeStep;
     bool sounding = false, triggered = false;
     uint8_t pulsePhase = 0, gateAge = 0;
+    uint8_t stepDuration = 6, pulseScale = 1, nextRatchet = 1;
 
     uint8_t roll() {
         uint32_t value;

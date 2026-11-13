@@ -326,14 +326,15 @@ void gateTimingUsesActualClockPulses() {
         NoteOutput output(send); Sequencer seq(output); Clock clk;
         seq.setStep(0, 72, 101); auto value = *seq.getStep(0); value.gate = 2;
         seq.setStep(0, value); seq.resume(); clk.setBPM(bpm, start); clk.start(start);
-        assert(clk.poll(start) == Clock::Step); seq.step(); expect({{72,101,true}});
+        assert(clk.poll(start) == Clock::Step);
+        seq.step(clk.stepDuration(), clk.pulseScale()); expect({{72,101,true}});
         // Independently ceil pulse deadlines: checks fractional periods and wrap.
-        const uint32_t rate = uint32_t(bpm * 24);
-        for (uint32_t pulse = 1; pulse <= 3; ++pulse) {
+        const uint32_t rate = uint32_t(bpm * 48);
+        for (uint32_t pulse = 1; pulse <= 5; ++pulse) {
             const uint32_t deadline = uint32_t((60000000ULL * pulse + rate - 1) / rate);
             assert(clk.poll(start + deadline - 1) == Clock::None); expect({});
             assert(clk.poll(start + deadline) == Clock::Pulse); seq.pulse();
-            if (pulse == 2) expect({{72,0,false}}); else expect({});
+            if (pulse == 4) expect({{72,0,false}}); else expect({});
         }
         seq.stop(); expect({});
     }
@@ -354,7 +355,37 @@ void gateTimingUsesActualClockPulses() {
     }
 }
 
+void swingSpansRetainAllSixRatchetHits() {
+    const int durations[] = {8, 10, 12, 14, 16};
+    const int hitTicks[][6] = {{0,1,2,4,5,6}, {0,1,3,5,6,8}, {0,2,4,6,8,10},
+                              {0,2,4,7,9,11}, {0,2,5,8,10,13}};
+    for (int pattern = 0; pattern < 5; ++pattern) {
+        NoteOutput output(send); Sequencer seq(output);
+        seq.setStep(0, 60, 77); seq.setStep(0, 67, 77, true);
+        auto value = *seq.getStep(0); value.ratchet = 6; value.gate = 1;
+        seq.setStep(0, value); seq.resume();
+        int hits = 0, releases = 0;
+        for (int tick = 0; tick < durations[pattern]; ++tick) {
+            if (!tick) seq.step(durations[pattern], 2); else seq.pulse();
+            int presses = 0;
+            for (const auto &event : events) {
+                if (event.on) { assert(event.velocity == 77); ++presses; }
+                else ++releases;
+            }
+            if (presses) {
+                assert(presses == 2 && hits < 6 && tick == hitTicks[pattern][hits]);
+                ++hits;
+            }
+            events.clear();
+        }
+        seq.stop();
+        for (const auto &event : events) { assert(!event.on); ++releases; }
+        assert(hits == 6 && releases == 12); events.clear();
+    }
+}
+
 int main() {
+    swingSpansRetainAllSixRatchetHits();
     gatesReleaseBeforeTheNextStep();
     ratchetGatesAndEditsUseTheActiveSnapshot();
     gateCleanupAndLiveOwners();

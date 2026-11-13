@@ -131,3 +131,4 @@
 #define PROJECT_INIT   382
 #define PROJECT_YES    383
 #define PROJECT_CANCEL 384
+#define SWING_CYCLE    385

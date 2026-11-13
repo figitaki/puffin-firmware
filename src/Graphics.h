@@ -242,7 +242,10 @@ void displayStepEditor(){
   const Sequencer::Step &value = *seq.getStep(seq.editStep());
   display.setCursor(24, 19);
   if(stepFull) display.print("FULL");
-  else if(stepView == StepGate) {
+  else if(stepView == StepSwing) {
+    const int percent = clk.swing() == 0 ? 50 : clk.swing() == 1 ? 58 : 67;
+    display.print(String("SW") + String(percent) + (clk.source() == Clock::Internal ? "" : " OFF"));
+  } else if(stepView == StepGate) {
     display.print(String("G") + String(value.gate) + "/6" + (value.count ? "" : " REST"));
   } else if(stepView == StepVelocity) {
     display.print(String("V") + String(value.velocity) + (value.count ? "" : " REST"));

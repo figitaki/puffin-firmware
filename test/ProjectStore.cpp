@@ -98,8 +98,13 @@ void rejectWithoutMutation() {
     assert(store.save(value) == ProjectStore::Saved);
     auto edited = value;
     edited.bpm = 222;
+    edited.swing = 255;
+    const auto committed = files.slots[0];
+    assert(store.save(edited, true) == ProjectStore::SaveFailed);
+    assert(files.writes == 1 && files.slots[0] == committed && files.slots[1].empty());
+    edited.swing = 0;
     files.slots[1] = files.slots[0];
-    files.slots[1][4] = 3;
+    files.slots[1][4] = 4;
     files.slots[1].resize(ProjectCodec::Size + 100, 0); // Larger future records stay protected.
     const auto unknown = files.slots[1];
     assert(store.load(edited) == ProjectStore::Unsupported && edited.bpm == 222);
@@ -142,31 +147,34 @@ void ambiguousAndFailedVerification() {
     assert(store.save(other) == ProjectStore::SaveFailed);
 }
 
-// Literal v1 pattern() fixture, independent of the production encoder and v2.
-static std::vector<uint8_t> legacyPattern(uint64_t generation) {
-    std::vector<uint8_t> wire(4430, 0);
-    const uint8_t header[] = {'P','F','N','P',1,0,32,0,46,17};
+// Literal v1/v2 pattern() fixture, independent of the production encoder.
+static std::vector<uint8_t> legacyPattern(uint64_t generation, unsigned version = 1) {
+    const size_t stepSize = version == 1 ? 17 : 18;
+    const size_t trackSize = 6 + 64 * stepSize;
+    std::vector<uint8_t> wire(version == 1 ? 4430 : 4686, 0);
+    const uint8_t header[] = {'P','F','N','P',uint8_t(version),0,32,0,46,uint8_t(version == 1 ? 17 : 18)};
     memcpy(wire.data(), header, sizeof(header));
     for (int i = 0; i < 8; ++i) wire[12 + i] = uint8_t(generation >> (8 * i));
     wire[32] = 17; wire[48] = 1; wire[52] = 137;
     for (int t = 0; t < 4; ++t) {
-        const size_t track = 54 + t * 1094;
+        const size_t track = 54 + t * trackSize;
         wire[track] = uint8_t(t + 1); wire[track + 4] = t == 0 ? 19 : 16;
         wire[track + 5] = t == 1 ? 1 : 0;
         for (int s = 0; s < 64; ++s) {
-            wire[track + 6 + s * 17 + 6] = 100;
-            wire[track + 6 + s * 17 + 7] = 1;
+            wire[track + 6 + s * stepSize + 6] = 100;
+            wire[track + 6 + s * stepSize + 7] = 1;
+            if (version == 2) wire[track + 6 + s * stepSize + 17] = 6;
         }
     }
-    wire[60 + 2 * 1094 + 63 * 17 + 4] = 1;
-    wire[60 + 2 * 1094 + 63 * 17 + 5] = 73;
+    wire[60 + 2 * trackSize + 63 * stepSize + 4] = 1;
+    wire[60 + 2 * trackSize + 63 * stepSize + 5] = 73;
     const uint32_t crc = ProjectCodec::crc32(wire.data(), wire.size(), true);
     for (int i = 0; i < 4; ++i) wire[24 + i] = uint8_t(crc >> (8 * i));
     return wire;
 }
 
-static void migrationAndMixedVersions() {
-    const auto old = legacyPattern(7);
+static void migrationAndMixedVersions(unsigned version) {
+    const auto old = legacyPattern(7, version);
     for (unsigned legacySlot = 0; legacySlot < 2; ++legacySlot) {
         Files files; files.slots[legacySlot] = old;
         ProjectStore store(files);
@@ -175,30 +183,32 @@ static void migrationAndMixedVersions() {
         assert(!files.writes && files.slots[legacySlot] == old && files.slots[1 - legacySlot].empty());
         assert(ProjectCodec::sameContent(value, pattern()) && !store.dirty(value));
         assert(store.save(value) == ProjectStore::Saved && files.writes == 1);
-        assert(files.slots[legacySlot] == old && files.slots[1 - legacySlot][4] == 2);
+        assert(files.slots[legacySlot] == old && files.slots[1 - legacySlot][4] == 3);
         uint64_t generation = 0; ProjectSnapshot decoded;
-        assert(ProjectCodec::decode(files.slots[1 - legacySlot].data(), 4686, decoded, generation) == ProjectCodec::Valid);
+        assert(ProjectCodec::decode(files.slots[1 - legacySlot].data(), ProjectCodec::Size, decoded, generation) == ProjectCodec::Valid);
         assert(generation == 8 && ProjectCodec::sameContent(value, decoded));
         assert(store.save(value) == ProjectStore::Saved && files.writes == 1);
+        value.swing = 1;
+        assert(store.dirty(value));
         value.tracks[0].steps[63].gate = 1; // Hidden gate-only edit is musical.
         assert(store.dirty(value));
         assert(store.save(value) == ProjectStore::Saved && files.writes == 2);
         assert(store.load(decoded) == ProjectStore::Loaded && ProjectCodec::sameContent(value, decoded));
     }
-    // Generation, not schema, chooses the winner; equivalent ties prefer v2.
-    for (uint64_t v2generation = 6; v2generation <= 8; ++v2generation) {
+    // Generation, not schema, chooses the winner; equivalent ties prefer v3.
+    for (uint64_t generation = 6; generation <= 8; ++generation) {
         for (unsigned legacySlot = 0; legacySlot < 2; ++legacySlot) {
             Files files; files.slots[legacySlot] = old;
-            files.slots[1 - legacySlot].resize(4686);
+            files.slots[1 - legacySlot].resize(ProjectCodec::Size);
             auto newer = pattern();
-            if (v2generation != 7) newer.tracks[2].steps[63].gate = 2;
-            assert(ProjectCodec::encode(newer, v2generation, files.slots[1 - legacySlot].data(), 4686));
+            if (generation != 7) newer.swing = 2;
+            assert(ProjectCodec::encode(newer, generation, files.slots[1 - legacySlot].data(), ProjectCodec::Size));
             ProjectStore store(files); ProjectSnapshot value;
             assert(store.load(value) == ProjectStore::Loaded && !files.writes);
-            assert(ProjectCodec::sameContent(value, v2generation < 7 ? pattern() : newer));
-            if (v2generation == 7) assert(store.save(value) == ProjectStore::Saved && !files.writes);
-            newer.tracks[2].steps[63].gate = 3;
-            assert(ProjectCodec::encode(newer, 7, files.slots[1 - legacySlot].data(), 4686));
+            assert(ProjectCodec::sameContent(value, generation < 7 ? pattern() : newer));
+            if (generation == 7) assert(store.save(value) == ProjectStore::Saved && !files.writes);
+            newer.swing = 1;
+            assert(ProjectCodec::encode(newer, 7, files.slots[1 - legacySlot].data(), ProjectCodec::Size));
             const auto before = value;
             assert(store.load(value) == ProjectStore::Ambiguous && ProjectCodec::sameContent(value, before));
             assert(store.save(value, true) == ProjectStore::Ambiguous && !files.writes);
@@ -206,28 +216,52 @@ static void migrationAndMixedVersions() {
     }
 }
 
-static void migrationFailures() {
-    const auto old = legacyPattern(7);
-    // Every partial migration leaves the original v1 slot byte-for-byte intact.
-    // Repeat for unchanged migration and for a hidden gate edit.
-    for (size_t attempt = 0; attempt < 2 * (ProjectCodec::Size + 1); ++attempt) {
+static void legacyPairSelection() {
+    // v1/v2 pairs still prefer generation first and v2 for equivalent ties.
+    for (uint64_t generation = 6; generation <= 8; ++generation) {
+        for (unsigned v1Slot = 0; v1Slot < 2; ++v1Slot) {
+            Files files;
+            files.slots[v1Slot] = legacyPattern(7, 1);
+            files.slots[1 - v1Slot] = legacyPattern(generation, 2);
+            const unsigned selected = generation < 7 ? v1Slot : 1 - v1Slot;
+            const auto retained = files.slots[selected];
+            ProjectStore store(files); ProjectSnapshot value;
+            assert(store.load(value) == ProjectStore::Loaded && !files.writes);
+            assert(ProjectCodec::sameContent(value, pattern()));
+            assert(store.save(value) == ProjectStore::Saved && files.writes == 1);
+            assert(files.slots[selected] == retained);
+            uint64_t savedGeneration = 0; ProjectSnapshot decoded;
+            const auto &saved = files.slots[1 - selected];
+            assert(saved[4] == 3);
+            assert(ProjectCodec::decode(saved.data(), saved.size(), decoded, savedGeneration) == ProjectCodec::Valid);
+            assert(savedGeneration == (generation < 7 ? 8 : generation + 1));
+            assert(store.save(value) == ProjectStore::Saved && files.writes == 1);
+        }
+    }
+}
+
+static void migrationFailures(unsigned version) {
+    const auto old = legacyPattern(7, version);
+    // Every boundary retains the legacy slot; repeat unchanged, gate and swing edits.
+    for (size_t attempt = 0; attempt < 3 * (ProjectCodec::Size + 1); ++attempt) {
         const size_t boundary = attempt % (ProjectCodec::Size + 1);
-        const bool changeGate = attempt > ProjectCodec::Size;
+        const size_t edit = attempt / (ProjectCodec::Size + 1);
         Files files; files.slots[0] = old;
         ProjectStore writer(files); ProjectSnapshot value;
         assert(writer.load(value) == ProjectStore::Loaded);
         auto edited = value;
-        if (changeGate) edited.tracks[2].steps[63].gate = 1;
+        if (edit == 1) edited.tracks[2].steps[63].gate = 1;
+        if (edit == 2) edited.swing = 2;
         files.writeLimit = boundary; files.syncFailure = true;
         assert(writer.save(edited) == ProjectStore::SaveFailed);
-        assert(writer.dirty(edited) == changeGate && !writer.dirty(value));
+        assert(writer.dirty(edited) == (edit != 0) && !writer.dirty(value));
         assert(files.slots[0] == old);
         ProjectStore reboot(files); ProjectSnapshot recovered;
         const auto result = reboot.load(recovered);
         assert(result == ProjectStore::Loaded || result == ProjectStore::Recovered);
-        assert(ProjectCodec::sameContent(recovered, boundary == 4686 ? edited : value));
+        assert(ProjectCodec::sameContent(recovered, boundary == ProjectCodec::Size ? edited : value));
     }
-    // Failed readback must not advance the musical baseline or touch v1.
+    // Failed readback must not advance the musical baseline or touch the legacy slot.
     Files files; files.slots[0] = old;
     ProjectStore store(files); ProjectSnapshot value;
     assert(store.load(value) == ProjectStore::Loaded);
@@ -241,8 +275,8 @@ static void migrationFailures() {
     assert(store.load(recovered) == ProjectStore::Recovered && ProjectCodec::sameContent(recovered, pattern()));
     assert(store.save(recovered) == ProjectStore::Saved && files.slots[0] == old);
     assert(store.save(recovered) == ProjectStore::Saved && files.writes == 2);
-    // An equivalent v1 response is not successful verification of a v2 write.
-    Files stale; stale.slots[0] = old; stale.substituteReadback = legacyPattern(8);
+    // An equivalent legacy response is not successful verification of a v3 write.
+    Files stale; stale.slots[0] = old; stale.substituteReadback = legacyPattern(8, version);
     ProjectStore staleStore(stale);
     assert(staleStore.save(pattern()) == ProjectStore::SaveFailed);
     assert(staleStore.dirty(pattern()) && stale.slots[0] == old && stale.writes == 1);
@@ -253,7 +287,8 @@ int main() {
     interruptionAtEveryByte();
     rejectWithoutMutation();
     ambiguousAndFailedVerification();
-    migrationAndMixedVersions();
-    migrationFailures();
+    migrationAndMixedVersions(1); migrationAndMixedVersions(2);
+    legacyPairSelection();
+    migrationFailures(1); migrationFailures(2);
     puts("Project store recovery tests passed (every byte interruption boundary)");
 }
