@@ -17,6 +17,7 @@
 
 //#define CS_USE_NIMBLE
 #include "Clock.h"
+#include "NoteKeyboard.h"
 #include "MultiTrackSequencer.h"
 #include "ProjectStorage.h"
 #include "PatternSync.h"
@@ -48,8 +49,6 @@ StepView stepView = StepNotes;
 uint8_t editControl = 74; // MIDI brightness/filter cutoff by convention.
 bool stepFull = false;
 
-bool activeNotes[12] = {false};
-uint8_t liveChannels[128] = {}; // Capture press-time channel across track changes.
 
 Clock clk;
 
@@ -64,6 +63,7 @@ void sendLockedControl(uint8_t control, uint8_t value, uint8_t channel){
 }
 
 NoteOutput noteOutput(sendOwnedNote, sendLockedControl);
+NoteKeyboard noteKeyboard(noteOutput);
 MultiTrackSequencer seq(noteOutput, esp_random);
 
 LittleFSProjectFiles projectFiles;
@@ -176,9 +176,8 @@ void updateSequencerClock(){
 void panicMIDI(){
   if(!midiMode) return; // The MIDI interfaces are not begun in typing mode.
   stopTransport(clk.running());
+  noteKeyboard.releaseAll();
   noteOutput.panic();
-  for(auto &channel : liveChannels) channel = 0;
-  for(auto &note : activeNotes) note = false;
   midi_out->sendNow();
   if(serialOutput) Serial0.flush();
 }
@@ -301,18 +300,6 @@ bool bleMIDIConnected(){
   return midi_ble.isConnected();
 }
 
-void playNote(int note, int vel){
-  if(note < 0 || note > 127 || vel < 1 || vel > 127 || liveChannels[note]) return;
-  liveChannels[note] = seq.channel();
-  noteOutput.press(note, vel, liveChannels[note]);
-}
-
-void stopNote(int note){
-  if(note < 0 || note > 127 || !liveChannels[note]) return;
-  noteOutput.release(note, liveChannels[note]);
-  liveChannels[note] = 0;
-}
-
 // Process the correct midi function triggered from MIDIMap.h
 void processMIDIPress(int function){
   if(projectBusy) return;
@@ -331,13 +318,21 @@ void processMIDIPress(int function){
   if(293 < function && function < 314){
     const uint8_t storedVelocity = stepEditing ? seq.getStep(seq.editStep())->velocity : 0;
     const uint8_t velocity = storedVelocity ? storedVelocity : 95;
-    int noteToPlay = function-241;
-    activeNotes[noteToPlay%12] = true;
-    playNote(noteToPlay, velocity);
+    const int noteToPlay = noteKeyboard.press(function - 241, velocity, seq.channel());
+    if(noteToPlay < 0) return;
     if(stepEditing) stepFull = !seq.setStep(seq.editStep(),noteToPlay,velocity,chordEntry);
     else if(seq.playing()) seq.setStep(-1,noteToPlay,velocity);
   }
   switch (function){
+    case OCTAVE_DOWN:
+    case OCTAVE_UP:
+      noteKeyboard.shiftOctave(function == OCTAVE_DOWN ? -1 : 1);
+      {
+        static char notice[20];
+        snprintf(notice, sizeof(notice), "KEY OCTAVE %+d", noteKeyboard.octave());
+        showProjectNotice(notice);
+      }
+      break;
     case SW_OUTPUT:
       panicMIDI(); // Release on the old route before selecting the new one.
       serialOutput = !serialOutput;
@@ -501,10 +496,7 @@ void processMIDIRelease(int function){
 
   // if function is between 300 and 320, play that respective note
   if(293 < function && function < 314){
-    const uint8_t velocity = 0x7F;
-    int noteToPlay = function-241;
-    activeNotes[noteToPlay%12] = false;
-    stopNote(noteToPlay);
+    noteKeyboard.release(function - 241);
   }
 }
 

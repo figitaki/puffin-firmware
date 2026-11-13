@@ -31,6 +31,8 @@ jobs:
           /tmp/puffin-keymap-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeyboardOutput.cpp -o /tmp/puffin-output-tests
           /tmp/puffin-output-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/NoteKeyboard.cpp -o /tmp/puffin-note-keyboard-tests
+          /tmp/puffin-note-keyboard-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Sequencer.cpp -o /tmp/puffin-sequencer-tests
           /tmp/puffin-sequencer-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests

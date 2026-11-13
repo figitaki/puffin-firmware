@@ -87,6 +87,8 @@
 #define PLAY_CHORD      315
 
 #define SW_OUTPUT       320
+#define OCTAVE_DOWN     321
+#define OCTAVE_UP       322
 
 #define CLOCK_START     330
 #define CLOCK_STOP      331

@@ -195,6 +195,20 @@ There is no independent gate scheduler. Project storage is described below.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
 
+## MIDI keyboard octaves
+
+In MIDI mode, **Fn+Left / Fn+Right** shift the performance keys down/up one
+octave, including notes entered into the step editor. The OLED briefly reports
+`KEY OCTAVE +0`, `KEY OCTAVE -1`, etc. The offset is clamped to −4…+4 octaves so
+every key remains in MIDI range (default notes 53–72, full range 5–120).
+Physical V is note 60 at octave offset zero.
+
+Octave changes affect new presses only, not existing sequence steps or held
+notes. Each held key releases its captured pitch and channel even after octave
+or track changes. Overlapping keys retain independent ownership of the same
+pitch. Route changes release held notes on the old route; re-press afterward.
+The octave is a runtime entry tool, resets on reboot, and is not project data.
+
 ## Four-track sequencing
 
 Four tracks, each with up to four notes per step, run on MIDI channels 1–4, sharing the clock and
