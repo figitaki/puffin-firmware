@@ -45,7 +45,8 @@ struct ProjectSnapshot {
 
 class ProjectCodec {
 public:
-    static const size_t HeaderSize = 32, PayloadSize = 4398, Size = 4430;
+    static const size_t HeaderSize = 32, PayloadSize = 4654, Size = 4686;
+    static const size_t V1PayloadSize = 4398, V1Size = 4430;
     enum Result { Valid, Invalid, Unsupported };
 
     // CRC32/ISO-HDLC. zeroChecksum selects the record's zeroed CRC field;
@@ -65,7 +66,7 @@ public:
         if (!data || size != Size || !generation || !snapshot.valid()) return false;
         memset(data, 0, Size);
         memcpy(data, "PFNP", 4);
-        put(data + 4, 1, 2);
+        put(data + 4, 2, 2);
         put(data + 6, HeaderSize, 2);
         put(data + 8, PayloadSize, 4);
         put(data + 12, generation, 8);
@@ -88,6 +89,7 @@ public:
                     *p++ = i < step.lockCount ? step.locks[i].value : 0;
                 }
                 *p++ = step.lockCount;
+                *p++ = step.gate;
             }
         }
         put(data + 24, crc32(data, Size, true), 4);
@@ -98,11 +100,15 @@ public:
                          ProjectSnapshot &out, uint64_t &generation) {
         if (!data || size < 4 || memcmp(data, "PFNP", 4)) return Invalid;
         // Protect unknown versions even if the rest of their record is malformed.
-        if (size >= 6 && get(data + 4, 2) != 1) return Unsupported;
-        if (size != Size || get(data + 6, 2) != HeaderSize ||
-            get(data + 8, 4) != PayloadSize || !get(data + 12, 8) ||
+        if (size < 6) return Invalid;
+        const uint64_t version = get(data + 4, 2);
+        if (version != 1 && version != 2) return Unsupported;
+        const size_t recordSize = version == 1 ? V1Size : Size;
+        const size_t stepSize = version == 1 ? 17 : 18;
+        if (size != recordSize || get(data + 6, 2) != HeaderSize ||
+            get(data + 8, 4) != recordSize - HeaderSize || !get(data + 12, 8) ||
             get(data + 20, 4) || get(data + 28, 4) ||
-            get(data + 24, 4) != crc32(data, Size, true)) return Invalid;
+            get(data + 24, 4) != crc32(data, size, true)) return Invalid;
         // Validate first using only one small Step, then publish in a second
         // pass. The caller owns the stable input buffer for both passes.
         const uint8_t *p = data + HeaderSize;
@@ -115,10 +121,10 @@ public:
             if (get(p, 4) != uint32_t(t + 1) || p[4] < 1 || p[4] > 64 || p[5] > 1)
                 return Invalid;
             p += 6;
-            for (int s = 0; s < 64; ++s, p += 17) {
+            for (int s = 0; s < 64; ++s, p += stepSize) {
                 if (p[4] > 4 || p[16] > 4) return Invalid;
                 Sequencer::Step step;
-                readStep(p, step);
+                readStep(p, step, version == 2);
                 if (!Sequencer::validStep(step)) return Invalid;
             }
         }
@@ -130,7 +136,7 @@ public:
             track.id = uint32_t(get(p, 4)); p += 4;
             track.length = *p++;
             track.muted = *p++ != 0;
-            for (auto &step : track.steps) { readStep(p, step); p += 17; }
+            for (auto &step : track.steps) { readStep(p, step, version == 2); p += stepSize; }
         }
         generation = get(data + 12, 8);
         return Valid;
@@ -147,7 +153,7 @@ public:
                 const auto &u = x.steps[s];
                 const auto &v = y.steps[s];
                 if (u.count != v.count || u.velocity != v.velocity || u.chance != v.chance ||
-                    u.ratchet != v.ratchet || u.lockCount != v.lockCount) return false;
+                    u.ratchet != v.ratchet || u.lockCount != v.lockCount || u.gate != v.gate) return false;
                 // Bound even malformed caller objects; equality is not validation.
                 for (int i = 0; i < u.count && i < 4; ++i)
                     if (u.notes[i] != v.notes[i]) return false;
@@ -160,10 +166,11 @@ public:
     }
 
 private:
-    static void readStep(const uint8_t *p, Sequencer::Step &step) {
+    static void readStep(const uint8_t *p, Sequencer::Step &step, bool hasGate) {
         step = Sequencer::Step{};
         step.count = p[4]; step.velocity = p[5];
         step.chance = p[6]; step.ratchet = p[7]; step.lockCount = p[16];
+        step.gate = hasGate ? p[17] : 6;
         for (int i = 0; i < step.count; ++i) step.notes[i] = p[i];
         for (int i = 0; i < step.lockCount; ++i) {
             step.locks[i].control = p[8 + i * 2];

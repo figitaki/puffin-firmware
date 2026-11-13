@@ -240,6 +240,7 @@ These are physical key positions, independent of the typing preset or remaps.
 | Fn+Return | Make the selected step the inclusive end of the sequence |
 | Note keys | Audition and write using the selected step's velocity (95 if unset) |
 | Fn+N / Fn+M | Velocity −1 / +1, clamped to 1–127 |
+| Fn+comma / Fn+period | Gate −1 / +1 MIDI clock pulses, clamped to 1–6 |
 | Return | Clear the selected step, including its chord, chance, ratchets, and locks |
 
 Each track remembers its own edit position. The cursor does not advance when
@@ -268,7 +269,7 @@ Fn+Q/W/E/R, Fn+T, Fn+Y/U, transport, and Down (output route) retain their
 existing functions. Outside the editor, note keys only record while running
 and Return still clears the next playback step. Outside the editor, recording
 still replaces that step with one note. Edits remain unsaved until an explicit
-project save. There is no gate editor or undo yet.
+project save. There is no undo yet.
 
 Velocity editing selects the `V95` detail view. Empty steps also show `REST`:
 changing velocity does not add notes or send MIDI. An unset/silent velocity of
@@ -276,8 +277,36 @@ zero starts from 95 (N makes 94; M makes 96); further taps change by one. All
 notes in a chord share this velocity. Replacement, chord entry and audition use
 it; performance-mode recording stays at 95. Clearing the step resets it to zero.
 Running edits affect the next visit, not the sounding chord or pending ratchets.
-Velocity is already part of project schema v1 and survives Save/Load, including
-hidden pages; no format migration is required.
+Velocity survives Save/Load, including hidden pages.
+
+Gate editing selects `G2/6`: two of the six 24-PPQN MIDI clock pulses in a
+sixteenth-note step. Gates default to 6 (the original full-step sustain) and
+range from 1 to 6. Fn+comma shortens, Fn+period lengthens. Empty steps also show
+`REST`; adjusting their gate does not add notes. Replacement/chord entry retain
+the gate; Return clears it back to 6. All chord notes share a gate, and running
+edits apply only on the next visit. Live audition still follows key release,
+not the sequenced gate.
+
+A gate ends after its pulse count or at the next ratchet/step hit, whichever
+comes first. For example, gate 1 with 2x ratchets sends on/off at pulse 0/1 and
+3/4; gate 5 with 2x ratchets is cut at pulse 3 and at the next step. There are no
+ties or notes held across step boundaries. Gate expiry, Stop, mute, resize and
+lost-clock handling release only sequence ownership and cancel pending sequence
+hits as appropriate. Route/mode changes panic all local owners on the old route.
+Receiver sustain/CC state can still hold sound.
+
+This is intentionally pulse-resolution gating, not percentage or millisecond
+gating. One pulse is 125 ms at 20 BPM, about 18.25 ms at 137 BPM, and about
+8.33 ms at 300 BPM. Fractional internal periods and timer wrap use the existing
+clock. External gates count the actual BLE/TRS pulses and follow their jitter;
+there is no tempo prediction between pulses. A lost external master releases
+remaining sequence notes after the existing 500-ms timeout. Dense serial MIDI,
+BLE scheduling and the main loop add latency; native tests do not measure it.
+
+New saves use project schema v2 with gate values for all 256 steps. Existing
+v1 projects load read-only with gate 6. The first explicit Save writes v2 to
+the other generation slot, retaining the v1 recovery copy; older firmware
+cannot load v2 and will refuse ordinary overwrites. Back up before downgrading.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -300,7 +329,7 @@ editor (except MIDI Ctrl, which is also a chord-entry toggle inside the editor).
 | Fn+H / Fn+J | Select MIDI CC number −1 / +1 (0–119; starts at 74) |
 | Fn+K / Fn+L | Set/adjust that CC lock value −1 / +1 (0–127) |
 | Fn+semicolon | Remove the selected CC lock from this step |
-| Fn+Backspace | Cycle note, trigger, CC, and velocity detail views |
+| Fn+Backspace | Cycle note, trigger, CC, velocity, and gate detail views |
 
 Chord append mode shows `+` before the transport indicator. Tap up to four
 different note keys to build a chord on the selected step, without advancing
@@ -344,7 +373,7 @@ step to sound a new chord. Explicit project saves retain these step settings.
 ## Project Save/Load
 
 One project holds all four tracks, their lengths/mutes, all 64 steps per track
-(including hidden pages), chords, shared velocity, chance, ratchets, CC locks,
+(including hidden pages), chords, shared velocity/gate, chance, ratchets, CC locks,
 and internal tempo. Clock source/output route, held notes, transport position,
 editor tools, typing maps, and Bluetooth identities are not project content.
 A `*` in either MIDI view marks unsaved musical changes; returning to the saved
@@ -387,7 +416,7 @@ Save; it is never silently overwritten. Initialization is a separate destructive
 action, not a recovery shortcut. Failed writes show `SAVE FAILED`, retain the
 unsaved marker, and leave the previous committed snapshot untouched.
 
-The fixed v1 format, storage policy, limitations, and physical power-loss
+The v2 format, v1 migration, storage policy, limitations, and physical power-loss
 acceptance checklist are in [Project persistence](docs/project-persistence.md).
 Software checks do **not** establish real-board flash durability or uninterrupted
 MIDI delivery. Physical save/reboot/power-cut and updater-preservation tests remain

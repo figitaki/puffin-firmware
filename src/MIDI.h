@@ -42,7 +42,7 @@ bool bridgeBLEtoSER = true;
 bool serialOutput = false;
 bool stepEditing = false;
 bool chordEntry = false;
-enum StepView { StepNotes, StepTrigger, StepControl, StepVelocity };
+enum StepView { StepNotes, StepTrigger, StepControl, StepVelocity, StepGate };
 StepView stepView = StepNotes;
 uint8_t editControl = 74; // MIDI brightness/filter cutoff by convention.
 bool stepFull = false;
@@ -367,7 +367,17 @@ void processMIDIPress(int function){
       stepFull = false;
       break;
     case EDIT_DETAILS:
-      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 4);
+      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 5);
+      break;
+    case GATE_DOWN:
+    case GATE_UP:
+      if(stepEditing) {
+        Sequencer::Step value = *seq.getStep(seq.editStep());
+        value.gate = constrain(int(value.gate) + (function == GATE_UP ? 1 : -1), 1, 6);
+        seq.setStep(seq.editStep(), value);
+        stepFull = false;
+        stepView = StepGate;
+      }
       break;
     case VELOCITY_DOWN:
     case VELOCITY_UP:

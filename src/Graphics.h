@@ -242,7 +242,9 @@ void displayStepEditor(){
   const Sequencer::Step &value = *seq.getStep(seq.editStep());
   display.setCursor(24, 19);
   if(stepFull) display.print("FULL");
-  else if(stepView == StepVelocity) {
+  else if(stepView == StepGate) {
+    display.print(String("G") + String(value.gate) + "/6" + (value.count ? "" : " REST"));
+  } else if(stepView == StepVelocity) {
     display.print(String("V") + String(value.velocity) + (value.count ? "" : " REST"));
   } else if(stepView == StepTrigger) {
     display.print(String("C") + String(value.chance) + " R" + String(value.ratchet) + " N" + String(value.count));

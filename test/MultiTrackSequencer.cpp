@@ -358,7 +358,23 @@ void velocityEditsKeepActiveChordSnapshot() {
     expect({});
 }
 
+void gatesAreIndependentAcrossTracks() {
+    NoteOutput output(send);
+    MultiTrackSequencer seq(output);
+    seq.setStep(0, 60, 91);
+    auto value = *seq.getStep(0); value.gate = 1; seq.setStep(0, value);
+    seq.selectTrack(1); seq.setStep(0, 60, 73);
+    value = *seq.getStep(0); value.gate = 4; seq.setStep(0, value);
+    seq.resume(); seq.step(); expect({{1,60,91,true},{2,60,73,true}});
+    seq.pulse(); expect({{1,60,0,false}});
+    seq.pulse(); seq.pulse(); expect({});
+    seq.selectTrack(0); seq.selectStep(8); // Navigation cannot change pending gates.
+    seq.pulse(); expect({{2,60,0,false}});
+    seq.pulse(); seq.stop(); expect({});
+}
+
 int main() {
+    gatesAreIndependentAcrossTracks();
     velocityEditsKeepActiveChordSnapshot();
     independentLengthsAndChannels();
     mutePreservesPhaseAndLiveOwner();
