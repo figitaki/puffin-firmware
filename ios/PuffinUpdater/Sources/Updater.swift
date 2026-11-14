@@ -18,6 +18,7 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     @Published private(set) var message = "Choose trusted firmware to begin."
     @Published private(set) var image: FirmwareImage?
     @Published private(set) var release: FirmwareRelease?
+    @Published private(set) var isPrerelease = false
     @Published private(set) var devices: [Device] = []
     @Published private(set) var written: UInt32 = 0
     @Published private(set) var disconnecting = false
@@ -49,22 +50,25 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     func checkForUpdates() {
         guard canStart else { return }
         failureStage = .service
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "PuffinReleaseManifestURL") as? String,
-              let url = URL(string: value), url.scheme == "https", url.host != nil,
-              url.user == nil, url.password == nil else {
-            fail("The official update service hasn’t been configured for this build."); return
-        }
         let token = UUID(); importID = token
-        image = nil; release = nil; phase = .importing; message = "Checking for updates…"
+        image = nil; release = nil; isPrerelease = false
+        phase = .importing; message = "Checking GitHub Releases…"
         downloadTask = Task {
             do {
-                var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                var request = URLRequest(url: GitHubRelease.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+                request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
                 let (bytes, response) = try await URLSession.shared.data(for: request)
                 try FirmwareRelease.checkResponse(response)
-                let available = try FirmwareRelease.decode(bytes)
+                let selected = try GitHubRelease.newestReady(in: bytes)
                 guard importID == token, !Task.isCancelled else { return }
-                release = available; phase = .idle; message = "An update is available."
+                let manifestRequest = URLRequest(url: selected.manifestURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+                let (manifest, manifestResponse) = try await URLSession.shared.data(for: manifestRequest)
+                try FirmwareRelease.checkResponse(manifestResponse)
+                let available = try selected.decodeManifest(manifest)
+                guard importID == token, !Task.isCancelled else { return }
+                release = available; isPrerelease = selected.prerelease; phase = .idle
+                message = selected.prerelease ? "A prerelease is available. Physical testing is ongoing." : "A published release is available."
             } catch {
                 guard importID == token, !Task.isCancelled else { return }
                 fail(error.localizedDescription)
@@ -99,7 +103,8 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         guard canStart else { return }
         failureStage = .service
         let token = UUID(); importID = token
-        phase = .importing; image = nil; release = nil; written = 0; message = "Preparing your update…"
+        phase = .importing; image = nil; release = nil; isPrerelease = false
+        written = 0; message = "Preparing your update…"
         Task {
             do {
                 let loaded = try await Task.detached(priority: .userInitiated) { try FirmwareImage.load(url) }.value
@@ -164,7 +169,7 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         releaseConnection()
         phase = .idle; written = 0
         if completed {
-            image = nil; release = nil; message = "Ready for your next update."
+            image = nil; release = nil; isPrerelease = false; message = "Ready for your next update."
         } else {
             message = "Canceled. Unfinished transfers are discarded. If verification had started, installation may already have completed; inspect Puffin before retrying from zero."
         }
@@ -406,8 +411,10 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
 
     private func configurePreview(_ state: String) {
         // Design-only sample. No central manager, downloads, imports or writes.
+        isPrerelease = state == "prerelease"
+        let version = isPrerelease ? "0.1.0-beta.1" : "1.0.0"
         let sample = """
-        {"version":"1.0.0","notes":["More ways to shape every step.","Smoother connections. Same familiar Puffin."],"target":"ProS3","url":"https://example.invalid/firmware.bin","size":1048576,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        {"version":"\(version)","notes":["More ways to shape every step.","Smoother connections. Same familiar Puffin."],"target":"ProS3","url":"https://example.invalid/firmware.bin","size":1048576,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
         """
         release = try? FirmwareRelease.decode(Data(sample.utf8))
         switch state {

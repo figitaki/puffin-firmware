@@ -1,6 +1,16 @@
 import XCTest
 
 final class UpdaterFlowTests: XCTestCase {
+    func testPrereleaseWarningAppearsBeforeDownloading() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview-updater", "prerelease"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["v0.1.0-beta.1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Prerelease — physical testing is ongoing."].exists)
+        XCTAssertTrue(app.buttons["primary-action"].isEnabled)
+        XCTAssertEqual(app.buttons["primary-action"].label, "Get update")
+    }
+
     // Exercises real controls against an isolated preview, never Bluetooth.
     func testUpdateFlowAndCodeValidation() {
         let app = XCUIApplication()

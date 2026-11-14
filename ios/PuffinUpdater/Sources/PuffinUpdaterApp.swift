@@ -154,6 +154,11 @@ struct UpdaterView: View {
                         Spacer()
                         Text("v\(release.version)").font(.caption.monospacedDigit())
                     }
+                    if updater.isPrerelease {
+                        Text("Prerelease — physical testing is ongoing.")
+                            .font(.caption.weight(.semibold)).foregroundStyle(accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     ForEach(Array(release.notes.enumerated()), id: \.offset) { _, note in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: "plus").foregroundStyle(accent)

@@ -10,11 +10,21 @@ No server is deployed or distribution signing identity included.
 
 ## Official update service
 
-Set the build's `INFOPLIST_KEY_PuffinReleaseManifestURL` to the publisher-controlled
-HTTPS manifest URL in Xcode settings or your private release configuration, then
-regenerate the project if configuring it through XcodeGen. No production endpoint
-has been supplied, so the unconfigured app fails closed instead of downloading
-from a guessed host. Users do not enter a server URL, token, certificate or hash.
+**Check for updates** now reads the public GitHub Releases API for
+`figitaki/puffin-firmware`; no server configuration or GitHub token is required.
+It chooses the most recently published complete ProS3 release among the API's
+100 recent entries, including prereleases. Drafts, unpublished entries and
+releases whose firmware, checksum or manifest asset is still missing/uploading
+are skipped. Prereleases show an explicit experimental-firmware warning before
+downloading. Installing remains a separate, explicit PIN-confirmed action.
+
+The app fetches that tag's `puffin-ProS3-manifest.json`, checks its version,
+firmware URL and byte count against the selected release asset, then validates
+the downloaded image's size and SHA-256 as before. Only exact asset URLs from
+this repository are accepted for discovery. A new release becomes available once
+its release workflow finishes uploading all three assets. An empty feed, API/rate
+limit error or invalid manifest shows an error; local file import remains available.
+The old `PuffinReleaseManifestURL` configuration is no longer used.
 
 The manifest is JSON with `version` (display label), `notes` (array of release-note
 strings), `target` (`ProS3`), `url` (HTTPS application binary), `size` (exact byte
@@ -81,6 +91,7 @@ For screenshots only, add these Scheme → Run → Arguments (or equivalent `sim
 
 ```text
 --preview-updater idle
+--preview-updater prerelease
 --preview-updater connect
 --preview-updater pin
 --preview-updater transfer
