@@ -307,6 +307,8 @@ void displayMIDI(){
     }
   }
 
+  bool activeNotes[12];
+  for(int i = 0; i < 12; ++i) activeNotes[i] = noteKeyboard.active(i);
   updatePiano(activeNotes);
 
 }
