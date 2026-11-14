@@ -17,6 +17,8 @@ public:
     int nextStep() const { return tracks[selected].s; }
     int editStep() const { return editSteps[selected]; }
     int length() const { return tracks[selected].getLength(); }
+    int pageCount() const { return (length() + Sequencer::StepsPerPage - 1) / Sequencer::StepsPerPage; }
+    int editPage() const { return editStep() / Sequencer::StepsPerPage; }
     bool muted() const { return tracks[selected].isMuted(); }
     // All tracks' run states change together, including while muted.
     bool playing() const { return tracks[0].play; }
@@ -46,6 +48,18 @@ public:
         if (editSteps[selected] >= value) editSteps[selected] = value - 1;
         stop(); // Never resize only one running member of the transport.
         return true;
+    }
+
+    bool setPages(int count) {
+        if (count < 1 || count > Sequencer::MaxPages ||
+            count * Sequencer::StepsPerPage == length()) return false;
+        return setLength(count * Sequencer::StepsPerPage);
+    }
+
+    bool selectPage(int page) {
+        if (page < 0 || page >= pageCount()) return false;
+        const int target = page * Sequencer::StepsPerPage + editStep() % Sequencer::StepsPerPage;
+        return selectStep(target < length() ? target : length() - 1);
     }
 
     void clear() { tracks[selected].clear(); }

@@ -212,10 +212,14 @@ void processMIDIPress(int function){
       midi_out->sendNow();
       break;
     case TRACK_SHORTER:
-      if(seq.setLength(seq.length() - 1)) stopTransport(true);
+      if(seq.setPages(seq.pageCount() - 1)) stopTransport(true);
       break;
     case TRACK_LONGER:
-      if(seq.setLength(seq.length() + 1)) stopTransport(true);
+      if(seq.setPages(seq.pageCount() + 1)) stopTransport(true);
+      break;
+    case EDIT_SET_END:
+      if(stepEditing && seq.editStep() + 1 != seq.length() &&
+         seq.setLength(seq.editStep() + 1)) stopTransport(true);
       break;
     case EDIT_TOGGLE:
       stepEditing = !stepEditing;
@@ -226,13 +230,11 @@ void processMIDIPress(int function){
     case EDIT_PAGE_NEXT:
       if(stepEditing) {
         const int direction = function == EDIT_PREVIOUS || function == EDIT_PAGE_BACK ? -1 : 1;
-        int target = (seq.editStep() + direction + seq.length()) % seq.length();
         if(function == EDIT_PAGE_BACK || function == EDIT_PAGE_NEXT) {
-          const int pages = (seq.length() + 15) / 16;
-          const int page = (seq.editStep() / 16 + direction + pages) % pages;
-          target = min(page * 16 + seq.editStep() % 16, seq.length() - 1);
+          seq.selectPage((seq.editPage() + direction + seq.pageCount()) % seq.pageCount());
+        } else {
+          seq.selectStep((seq.editStep() + direction + seq.length()) % seq.length());
         }
-        seq.selectStep(target);
       }
       break;
     case BPM_INC:

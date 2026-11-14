@@ -147,8 +147,8 @@ editing is implemented.
 ## Sequencer note safety (foundation)
 
 The single-track model stores musical note numbers 0–127 and per-step velocities,
-not key-function codes. Velocity zero is a rest. It retains the prototype's
-96-step capacity and releases the explicitly tracked sounding note at the next
+not key-function codes. Velocity zero is a rest. Each track has a four-page,
+64-step capacity and releases the explicitly tracked sounding note at the next
 step, including at wraparound and after edits. Independent gate timing is not
 implemented yet.
 
@@ -179,8 +179,9 @@ validation on the board; host tests establish state/message behavior only.
 ## Four-track sequencing
 
 Four monophonic tracks run together on MIDI channels 1–4, sharing the clock and
-Start/Stop/Continue controls. Each has its own pattern, 1–96-step length (default
-96), next-step position, and mute state. Different lengths loop independently.
+Start/Stop/Continue controls. Each has its own pattern, 1–64-step length (default
+16: one page), next-step position, and mute state. A page contains 16 steps;
+tracks can use one through four pages. Different lengths loop independently.
 Only track 1 contains the prototype's initial C note; the others start empty.
 
 In MIDI mode, hold Fn and use these typing-key positions:
@@ -189,7 +190,7 @@ In MIDI mode, hold Fn and use these typing-key positions:
 | --- | --- |
 | Q / W / E / R | Select track 1 / 2 / 3 / 4 |
 | T | Toggle selected track mute |
-| Y / U | Shorten / lengthen selected pattern by one step |
+| Y / U | Remove / add one 16-step page on the selected track (1–4 pages) |
 
 The OLED shows `T1` through `T4`, with `M` appended when the selected track is
 muted. Live notes use the selected track's channel; releasing a key after a
@@ -200,9 +201,12 @@ and keeps advancing its position. Unmute takes effect at the next step.
 
 Changing length stops the shared transport and resets only the edited track's
 next-step position to zero. Other tracks retain their positions; Continue
-resumes from those positions. Attempts beyond 1–96 do nothing, including leaving
+resumes from those positions. Attempts beyond 1–4 pages do nothing, including leaving
 playback running. Shortening hides, rather than erases, steps beyond the new
-length. No settings or patterns survive restart yet. Typing-mode maps are unchanged.
+length. Adding/removing a page sets a full-page length: 16, 32, 48, or 64 steps.
+For example, a 19-step pattern has two pages; Fn+Y makes it 16 steps and Fn+U
+makes it 48 steps. No settings or patterns survive restart yet. Typing-mode maps
+are unchanged.
 
 ### Onboard step editor
 
@@ -213,6 +217,7 @@ These are physical key positions, independent of the typing preset or remaps.
 | --- | --- |
 | Left / Right | Previous / next step, wrapping within the selected track |
 | Fn+O / Fn+P | Previous / next 16-step page, wrapping between pages |
+| Fn+Return | Make the selected step the inclusive end of the sequence |
 | Note keys | Audition and write the selected step at velocity 95 |
 | Return | Clear the selected step to a rest |
 
@@ -223,9 +228,16 @@ clamping to the last step on a partial final page. For example, in a 17-step
 pattern, paging forward from step 16 selects step 17; paging forward again
 selects step 1. Shortening a pattern clamps its edit cursor if necessary.
 
-The OLED shows track/mute, `E` followed by the 1-based edit step, and `>` for
-running or `-` for stopped. The second line shows the selected note and velocity
-or `REST`, BPM, and clock source. The 16-step strip shows filled notes, rest
+To make a 19-step sequence, expand to two pages with Fn+U, enter the editor with
+Fn+I, use Fn+P and the arrows to select step 19, then press Fn+Return. Step 19
+will play before the sequence wraps to step 1. This stops playback just like
+other length changes; pressing Fn+Return on the existing end is a no-op.
+The shortcut does nothing outside the editor. To extend again, add a page.
+
+The OLED shows track/mute, current page / total pages, and `>` for running or
+`-` for stopped. The second line shows selected step / sequence length, the
+selected note or `REST`, BPM, and clock source. Notes are still entered at the
+fixed velocity of 95. The 16-step strip shows filled notes, rest
 dots, an outlined edit cursor, and a separate tick for the **next playback
 step** when it is on the current page. That tick is not a sounding-note marker.
 Battery, charging, and Bluetooth indicators remain visible.

@@ -111,3 +111,4 @@
 #define EDIT_NEXT      362
 #define EDIT_PAGE_BACK 363
 #define EDIT_PAGE_NEXT 364
+#define EDIT_SET_END   365
