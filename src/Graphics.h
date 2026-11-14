@@ -191,12 +191,25 @@ void displayStepEditor(){
   display.setCursor(24, 8);
   display.print(String("T") + String(seq.selectedTrack() + 1) +
                 (seq.muted() ? "M" : " ") + String(seq.editPage() + 1) + "/" + String(seq.pageCount()) +
-                (seq.playing() ? " >" : " -"));
+                (chordEntry ? "+" : " ") + (seq.playing() ? ">" : "-"));
   uint8_t note = 0, velocity = 0;
   seq.getStep(seq.editStep(), note, velocity);
+  const Sequencer::Step &value = *seq.getStep(seq.editStep());
   display.setCursor(24, 19);
-  display.print(String(seq.editStep() + 1) + "/" + String(seq.length()) + " " +
-                (velocity ? String("N") + String(note) : String("REST")));
+  if(stepFull) display.print("FULL");
+  else if(stepView == StepTrigger) {
+    display.print(String("C") + String(value.chance) + " R" + String(value.ratchet) + " N" + String(value.count));
+  } else if(stepView == StepControl) {
+    int lockValue = -1;
+    for(int i = 0; i < value.lockCount; ++i)
+      if(value.locks[i].control == editControl) lockValue = value.locks[i].value;
+    display.print(String(editControl) + "=" + (lockValue < 0 ? String("---") : String(lockValue)) +
+                  " L" + String(value.lockCount));
+  } else {
+    display.print(String(seq.editStep() + 1) + "/" + String(seq.length()) + " " +
+                  (value.count > 1 ? String(value.count) + "N" :
+                   velocity ? String("N") + String(note) : String("REST")));
+  }
   display.setCursor(88, 19);
   display.print(clk.getBPM() ? String(clk.getBPM()) : String("--"));
   display.setCursor(108, 19);
@@ -207,6 +220,7 @@ void displayStepEditor(){
     const int x = 24 + (index - first) * 6;
     seq.getStep(index, note, velocity);
     if(velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
+    else if(seq.getStep(index)->lockCount) display.drawRect(x + 1, 26, 3, 3, SSD1306_WHITE);
     else display.drawPixel(x + 2, 29, SSD1306_WHITE);
     if(index == seq.editStep()) display.drawRect(x, 24, 6, 7, SSD1306_WHITE);
     // The tick marks the next playback step, not the independently selected edit step.

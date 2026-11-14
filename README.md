@@ -146,9 +146,9 @@ editing is implemented.
 
 ## Sequencer note safety (foundation)
 
-The single-track model stores musical note numbers 0–127 and per-step velocities,
+The single-track model stores up to four musical note numbers 0–127 per step,
 not key-function codes. Velocity zero is a rest. Each track has a four-page,
-64-step capacity and releases the explicitly tracked sounding note at the next
+64-step capacity and releases the explicitly tracked sounding chord at the next
 step, including at wraparound and after edits. Independent gate timing is not
 implemented yet.
 
@@ -171,14 +171,13 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isr
 /tmp/puffin-sequencer-tests
 ```
 
-The chord action remains a prototype. There is no independent gate scheduler,
-polyphonic step editor, or project storage.
+There is no independent gate scheduler or project storage.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
 
 ## Four-track sequencing
 
-Four monophonic tracks run together on MIDI channels 1–4, sharing the clock and
+Four tracks, each with up to four notes per step, run on MIDI channels 1–4, sharing the clock and
 Start/Stop/Continue controls. Each has its own pattern, 1–64-step length (default
 16: one page), next-step position, and mute state. A page contains 16 steps;
 tracks can use one through four pages. Different lengths loop independently.
@@ -219,7 +218,7 @@ These are physical key positions, independent of the typing preset or remaps.
 | Fn+O / Fn+P | Previous / next 16-step page, wrapping between pages |
 | Fn+Return | Make the selected step the inclusive end of the sequence |
 | Note keys | Audition and write the selected step at velocity 95 |
-| Return | Clear the selected step to a rest |
+| Return | Clear the selected step, including its chord, chance, ratchets, and locks |
 
 Each track remembers its own edit position. The cursor does not advance when
 entering notes or during playback; edits work while stopped or running without
@@ -236,16 +235,18 @@ The shortcut does nothing outside the editor. To extend again, add a page.
 
 The OLED shows track/mute, current page / total pages, and `>` for running or
 `-` for stopped. The second line shows selected step / sequence length, the
-selected note or `REST`, BPM, and clock source. Notes are still entered at the
-fixed velocity of 95. The 16-step strip shows filled notes, rest
+selected note, chord size (such as `3N`), or `REST`, BPM, and clock source. Notes
+are still entered at the fixed velocity of 95. The 16-step strip shows filled notes, rest
 dots, an outlined edit cursor, and a separate tick for the **next playback
 step** when it is on the current page. That tick is not a sounding-note marker.
+Hollow small squares mark automation-only steps.
 Battery, charging, and Bluetooth indicators remain visible.
 
 Fn+Q/W/E/R, Fn+T, Fn+Y/U, transport, and Down (output route) retain their
 existing functions. Outside the editor, note keys only record while running
-and Return still clears the next playback step. Editing is monophonic and
-volatile: there is no velocity/gate editor, undo, or pattern persistence yet.
+and Return still clears the next playback step. Outside the editor, recording
+still replaces that step with one note. Editing is volatile: there is no
+velocity/gate editor, undo, or pattern persistence yet.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -253,6 +254,61 @@ controls, display, and received MIDI on a board.
 g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests
 /tmp/puffin-multitrack-tests
 ```
+
+### Chance, ratchets, chords, and parameter locks
+
+Enter the editor with Fn+I and select a step with the arrows. These physical
+key positions affect only the selected track/step, and do nothing outside the
+editor (except MIDI Ctrl, which is also a chord-entry toggle inside the editor).
+
+| Key position | Action |
+| --- | --- |
+| Fn+A / Fn+S | Chance −10% / +10%, clamped to 0–100% |
+| Fn+D / Fn+F | Previous / next ratchet count: 1, 2, 3, 6 |
+| Fn+G (or MIDI Ctrl) | Toggle chord append mode |
+| Fn+H / Fn+J | Select MIDI CC number −1 / +1 (0–119; starts at 74) |
+| Fn+K / Fn+L | Set/adjust that CC lock value −1 / +1 (0–127) |
+| Fn+semicolon | Remove the selected CC lock from this step |
+| Fn+Backspace | Cycle note, trigger, and CC detail views |
+
+Chord append mode shows `+` before the transport indicator. Tap up to four
+different note keys to build a chord on the selected step, without advancing
+the cursor; they need not be held together. Duplicate pitches are ignored.
+Disable append mode to replace a chord with a single note, retaining its chance,
+ratchets, and locks. Return clears the entire step to defaults. A fifth note or
+fifth distinct CC lock is rejected with `FULL`; existing data stays intact.
+Note keys still audition even when the sequence is muted, chance is zero, or
+the chord is full. Chord-entry mode and the CC selector are global editor tools,
+not per-track musical settings.
+
+Chance defaults to 100% and is rolled once per step visit, for the entire chord
+and its locks. 0% skips all of them, without keeping the preceding chord held.
+The hardware uses ESP32 randomness. Ratchets default to 1; 2, 3 and 6 mean that
+many evenly spaced chord hits within a sixteenth-note step. They use the actual
+24-PPQN pulses from internal, BLE, or TRS clock, not a guessed external tempo.
+4× ratchets need finer timing and are not supported yet. Locks send once before
+the first hit, not on each ratchet. Overlapping live notes retain ownership, so
+their pitches do not retrigger or release when a ratchet fires.
+Dense chords/ratchets across four tracks can exceed the 31.25-kbaud TRS MIDI
+bandwidth at high tempos; maximum density and physical timing need board testing.
+
+Up to four CC locks can be stored per step, including a step with no notes.
+Selecting a CC does not create a lock. Adjusting an unset lock starts from 64
+(K makes 63, L makes 65); further taps change it by one. Controls 120–127 are
+excluded because they are MIDI channel-mode commands. There is no parameter
+name discovery: map the CC to a plugin parameter in AUM/the receiving instrument.
+Locks send on the track channel and selected BLE/TRS route. Removing a lock,
+clearing a step, muting, or stopping does not restore the receiver's earlier CC
+value; it holds until another message changes it. This includes pedal-like CCs
+such as sustain, which may hold receiver voices even after note-offs.
+
+Trigger details show `C100 R2 N3` (chance, ratchets, note count). CC details show
+`74=65 L1` (selected CC, value, number of locks); `---` means that CC is unlocked.
+Editing these settings automatically selects their detail view. Running edits
+apply on the next visit: the sounding chord and its pending ratchets are a
+snapshot. Stop, mute, resize, route changes, and lost-clock handling release the
+sequence's notes and cancel remaining ratchets. Continue waits until the next
+step to sound a new chord. None of these patterns/settings survive reboot yet.
 
 ## Standalone transport and clock
 

@@ -7,8 +7,13 @@
 class NoteOutput {
 public:
     using SendNote = void (*)(uint8_t note, uint8_t velocity, bool on, uint8_t channel);
+    using SendControl = void (*)(uint8_t control, uint8_t value, uint8_t channel);
 
-    explicit NoteOutput(SendNote send) : send(send) {}
+    explicit NoteOutput(SendNote send, SendControl control = nullptr) : send(send), control(control) {}
+
+    void sendControl(uint8_t number, uint8_t value, uint8_t channel) {
+        if (control) control(number, value, channel);
+    }
 
     void press(int note, int velocity, int channel = 1) {
         if (note < 0 || note > 127 || velocity < 1 || velocity > 127 ||
@@ -34,5 +39,6 @@ public:
 
 private:
     SendNote send;
+    SendControl control;
     uint8_t owners[16][128] = {};
 };
