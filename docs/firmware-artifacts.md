@@ -52,12 +52,13 @@ Only the `.bin` file is firmware. The checksum and manifest are not installable.
 To install a release by hand, download the `.bin` and use **Install local
 firmware…** as above.
 
-The manifest has the same name in every release, so
-`https://github.com/figitaki/puffin-firmware/releases/latest/download/puffin-ProS3-manifest.json`
-always serves the latest non-prerelease release's manifest. That URL is compatible
-with the app's `PuffinReleaseManifestURL` setting, but this repository does not
-configure it. Configuring it makes GitHub releases the app's trusted publisher
-over HTTPS; see the trust model below.
+Puffin Updater discovers releases directly from this repository's public GitHub
+Releases API and fetches the selected tag's manifest. It includes complete
+prereleases and labels them before download; no manifest URL setting or GitHub
+token is required. See [the app documentation](../ios/PuffinUpdater/README.md#official-update-service)
+for selection and validation rules. The `/releases/latest/download/` URL excludes
+prereleases, so it is not used by the app. GitHub releases are the app's trusted
+publisher over HTTPS; see the trust model below.
 
 ### Verifying a release download
 

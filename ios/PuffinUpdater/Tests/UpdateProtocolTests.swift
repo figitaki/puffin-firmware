@@ -245,6 +245,68 @@ final class UpdateProtocolTests: XCTestCase {
             XCTAssertThrowsError(try FirmwareRelease.decode(JSONSerialization.data(withJSONObject: invalid)))
         }
         XCTAssertThrowsError(try FirmwareRelease.decode(Data(repeating: 0, count: 65537)))
+        for code in [403, 429] {
+            let response = HTTPURLResponse(url: GitHubRelease.feedURL, statusCode: code, httpVersion: nil,
+                                           headerFields: ["X-RateLimit-Remaining": "0"])!
+            XCTAssertThrowsError(try FirmwareRelease.checkResponse(response)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("rate-limited"))
+                XCTAssertTrue(error.localizedDescription.contains("local firmware"))
+            }
+        }
+    }
+
+    private func githubRelease(_ tag: String, published: String, prerelease: Bool = false) -> [String: Any] {
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        let names = ["puffin-ProS3-\(version).bin", "puffin-ProS3-\(version).sha256", "puffin-ProS3-manifest.json"]
+        return ["tag_name": tag, "published_at": published, "draft": false, "prerelease": prerelease,
+                "assets": names.map { ["name": $0, "state": "uploaded", "size": 64,
+                    "browser_download_url": "https://github.com/figitaki/puffin-firmware/releases/download/\(tag)/\($0)"] }]
+    }
+
+    func testGitHubSelectionUsesPublicationDateAndIncludesReadyPrereleases() throws {
+        let stable = githubRelease("v1.0.0", published: "2026-11-10T12:00:00Z")
+        let beta = githubRelease("v1.1.0-beta.1", published: "2026-11-12T12:00:00Z", prerelease: true)
+        var unfinished = githubRelease("v1.2.0", published: "2026-11-13T12:00:00Z")
+        unfinished["assets"] = []
+        var draft = githubRelease("v2.0.0", published: "2026-11-14T12:00:00Z")
+        draft["draft"] = true
+        let selected = try GitHubRelease.newestReady(in: JSONSerialization.data(withJSONObject: [unfinished, stable, draft, beta]))
+        XCTAssertEqual(selected.tagName, "v1.1.0-beta.1")
+        XCTAssertTrue(selected.prerelease)
+        XCTAssertEqual(selected.manifestURL.absoluteString,
+                       "https://github.com/figitaki/puffin-firmware/releases/download/v1.1.0-beta.1/puffin-ProS3-manifest.json")
+    }
+
+    func testGitHubRejectsMissingUploadingOrForeignAssets() throws {
+        let valid = githubRelease("v1.0.0", published: "2026-11-10T12:00:00Z")
+        let assets = valid["assets"] as! [[String: Any]]
+        for index in assets.indices {
+            for defect in 0..<3 {
+                var invalid = valid, changed = assets
+                if defect == 0 { changed.remove(at: index) }
+                if defect == 1 { changed[index]["state"] = "new" }
+                if defect == 2 { changed[index]["browser_download_url"] = "https://example.invalid/firmware.bin" }
+                invalid["assets"] = changed
+                XCTAssertThrowsError(try GitHubRelease.newestReady(in: JSONSerialization.data(withJSONObject: [invalid])))
+            }
+        }
+        XCTAssertThrowsError(try GitHubRelease.newestReady(in: Data("[]".utf8)))
+        var unpublished = valid; unpublished["published_at"] = NSNull()
+        XCTAssertThrowsError(try GitHubRelease.newestReady(in: JSONSerialization.data(withJSONObject: [unpublished])))
+    }
+
+    func testGitHubManifestMustMatchSelectedReleaseAsset() throws {
+        let selected = try GitHubRelease.newestReady(in: JSONSerialization.data(withJSONObject:
+            [githubRelease("v1.0.0", published: "2026-11-10T12:00:00Z")]))
+        let manifest: [String: Any] = ["version": "1.0.0", "notes": [], "target": "ProS3", "size": 64,
+            "sha256": String(repeating: "a", count: 64),
+            "url": "https://github.com/figitaki/puffin-firmware/releases/download/v1.0.0/puffin-ProS3-1.0.0.bin"]
+        XCTAssertNoThrow(try selected.decodeManifest(JSONSerialization.data(withJSONObject: manifest)))
+        for (key, value) in [("version", "1.0.1" as Any), ("size", 65 as Any),
+                             ("url", "https://github.com/figitaki/puffin-firmware/releases/download/v1.0.1/puffin-ProS3-1.0.1.bin" as Any)] {
+            var invalid = manifest; invalid[key] = value
+            XCTAssertThrowsError(try selected.decodeManifest(JSONSerialization.data(withJSONObject: invalid)))
+        }
     }
 
     func testOfficialReleaseBindsExactDownloadedImage() throws {
