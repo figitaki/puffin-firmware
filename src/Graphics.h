@@ -120,8 +120,8 @@ void displayBPM(){ // Adds BPM info to the display buffer
   display.setFont(&Font5x7FixedMono);
   display.setTextSize(1); // Draw 2X-scale text
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(84, 32);
-  display.println(String(clk.getBPM()) + " bpm");
+  display.setCursor(84, 31);
+  display.println((clk.getBPM() ? String(clk.getBPM()) : String("--")) + " bpm");
 }
 
 void displayBTStatus(){ // Adds bluetooth status to the display buffer
@@ -185,28 +185,26 @@ void updatePiano(bool active[12]){
   }
 }
 
-void displayMIDI(int cycle){
+void displayMIDI(){
   display.setFont(&FreeMono9pt7b);
   display.setTextSize(1);
   display.setCursor(42, 9);
 
-  if(cycle == 0){
-    clk.ext = false;
-  }
-
-  if (seq.serialOutput){
+  if (serialOutput){
     display.println("trs");
   } else {
     display.println("ble");
   }
-  if(clk.ext){
-    display.setFont(&Font5x7FixedMono);
-    display.setCursor(108, 23);
-    display.println("EXT");
-  }
+  display.setFont(&Font5x7FixedMono);
+  display.setCursor(108, 23);
+  display.println(clk.source() == Clock::Internal ? "INT" :
+                  clk.source() == Clock::BLE ? "BLE" : "TRS");
+  display.setCursor(80, 23);
+  display.println(String("T") + String(seq.selectedTrack() + 1) +
+                  (seq.muted() ? "M" : ""));
 
-  if(seq.s != 0){
-    if(seq.play){
+  if(seq.playing() || seq.nextStep() != 0){
+    if(seq.playing()){
       drawSymbol(22,15,MY_PLAY,WHITE,0,1);
     } else {
       drawSymbol(22,15,MY_STOP,WHITE,0,1);
@@ -217,15 +215,10 @@ void displayMIDI(int cycle){
 
 }
 
-// counter for periodic display updates (500 display cycles)
-int cycle = 0;
-int reset = 1000;
-
 // Main Display Update
 void mainScreenUpdate() {
   // Do not redraw a buffer that is still being sent to the OLED.
   if(displayTransfer.busy()) return;
-  if(cycle < reset) { cycle += 1; } else { cycle = 0; }
 
   // start refresh by clearing screen
   display.clearDisplay();
@@ -235,7 +228,7 @@ void mainScreenUpdate() {
 
 
   if(midiMode){
-    displayMIDI(cycle);
+    displayMIDI();
     displayBPM();
   } else { // if kb mode, display wpm and puffin guy
     // display current wpm

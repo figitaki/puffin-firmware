@@ -94,3 +94,12 @@
 #define BPM_INC         332
 #define BPM_DEC         333
 #define SEQ_CLEAR       334
+#define CLOCK_CONTINUE  335
+#define CLOCK_SOURCE    336
+#define TRACK_1         340
+#define TRACK_2         341
+#define TRACK_3         342
+#define TRACK_4         343
+#define TRACK_MUTE      344
+#define TRACK_SHORTER   345
+#define TRACK_LONGER    346

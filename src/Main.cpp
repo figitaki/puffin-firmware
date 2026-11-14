@@ -34,7 +34,6 @@ void setup() {
   
   Wire.begin();
   boardStart();
-  clk.setBPM(120);
 
   // Start Serial Output for monitoring/debugging
   Serial.begin(115200);
@@ -82,10 +81,14 @@ void setup() {
     
     // Manually route MIDI input from the serial interface to the BLE interface,
     // and the MIDI input from the BLE interface to the serial interface
-    if(bridgeBLEtoSER) {midi_ser | pipes | midi_ble;}
+    if(bridgeBLEtoSER) {
+      midi_ble >> bleToSerial >> midi_ser;
+      midi_ser >> serialToBle >> midi_ble;
+    }
     // Initialize the MIDI interfaces
     MIDI_Interface::beginAll();
     midi_ble.setCallbacks(callback); // Attach the custom callback
+    midi_ser.setCallbacks(callback);
     //midi_ble.begin();
     Serial.println("Started midi_ble");
 
@@ -164,7 +167,10 @@ void handleKeyEvent(const KeyInput::Event &event) {
     case CHANGE_ID1:
     case CHANGE_ID2:
     case CHANGE_ID3:
-      if (event.pressed) storeMacEEPROM(action - CHANGE_ID0);
+      if (event.pressed) {
+        panicMIDI();
+        storeMacEEPROM(action - CHANGE_ID0);
+      }
       return;
     case LED_B0:
       if (event.pressed) pixels.setBrightness(0);
@@ -263,8 +269,7 @@ void loop() {
   // One short OLED transaction, then return to input/MIDI polling.
   displayTransfer.update(Wire, SCREEN_I2C_ADDR, display.getBuffer());
 
-  // Update MIDI clock and output pulse if needed
-  //if (clockUpdate()) { midi_ser.sendRealTime(clock); };
+  if(midiMode) updateSequencerClock();
 
   // Update battery level every 30 seconds
   EVERY_N_SECONDS(30){

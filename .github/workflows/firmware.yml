@@ -23,13 +23,19 @@ jobs:
           key: platformio-${{ runner.os }}-6.1.18-${{ hashFiles('platformio.ini') }}
       - name: Install PlatformIO Core
         run: python -m pip install platformio==6.1.18
-      - name: Test physical input, layers, and HID ownership
+      - name: Test input, HID ownership, and sequencer safety
         run: |
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeyInput.cpp -o /tmp/puffin-input-tests
           /tmp/puffin-input-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/KeyboardOutput.cpp -o /tmp/puffin-output-tests
           /tmp/puffin-output-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Sequencer.cpp -o /tmp/puffin-sequencer-tests
+          /tmp/puffin-sequencer-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests
+          /tmp/puffin-multitrack-tests
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/DisplayTransfer.cpp -o /tmp/puffin-display-tests
           /tmp/puffin-display-tests
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Clock.cpp -o /tmp/puffin-clock-tests
+          /tmp/puffin-clock-tests
       - name: Build ProS3 firmware
         run: pio run --environment ProS3
