@@ -36,7 +36,10 @@ public:
         if (result == Unsupported || result == Unavailable || result == Ambiguous ||
             (result == Corrupt && !replaceCorrupt)) return result;
         if (newest >= 0 && generations[newest] == UINT64_MAX) return SaveFailed;
-        if (result == Loaded && ProjectCodec::sameContent(value, candidates[newest])) {
+        // Loading v1 is read-only. The first deliberate Save upgrades even
+        // unchanged music, retaining the old slot until v2 is verified.
+        if (result == Loaded && versions[newest] == 2 &&
+            ProjectCodec::sameContent(value, candidates[newest])) {
             baseline = value;
             hasBaseline = true;
             return Saved;
@@ -48,6 +51,7 @@ public:
         size_t size = 0;
         uint64_t verifiedGeneration = 0;
         if (files.read(target, buffer, sizeof(buffer), size) != ProjectFiles::Read ||
+            size != ProjectCodec::Size ||
             ProjectCodec::decode(buffer, size, candidates[target], verifiedGeneration) != ProjectCodec::Valid ||
             verifiedGeneration != generation ||
             !ProjectCodec::sameContent(value, candidates[target])) return SaveFailed;
@@ -68,6 +72,7 @@ private:
     ProjectSnapshot candidates[2], baseline;
     uint8_t buffer[ProjectCodec::Size + 1] = {};
     uint64_t generations[2] = {};
+    uint8_t versions[2] = {};
     int newest = -1;
     bool hasBaseline = false;
 
@@ -85,12 +90,15 @@ private:
             const auto decoded = ProjectCodec::decode(buffer, size, candidates[slot], generations[slot]);
             if (decoded == ProjectCodec::Unsupported) { unsupported = true; continue; }
             if (decoded != ProjectCodec::Valid) { invalid = true; continue; }
+            versions[slot] = buffer[4];
             if (newest < 0 || generations[slot] > generations[newest]) newest = int(slot);
             else if (generations[slot] == generations[newest] &&
                      !ProjectCodec::sameContent(candidates[slot], candidates[newest])) {
                 // With two slots, no later record can disambiguate this pair.
                 return Ambiguous;
             }
+            else if (generations[slot] == generations[newest] &&
+                     versions[slot] > versions[newest]) newest = int(slot);
         }
         if (unsupported) return Unsupported;
         if (unavailable) return Unavailable;

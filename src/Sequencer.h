@@ -17,6 +17,7 @@ public:
         uint8_t notes[MaxNotes] = {};
         uint8_t count = 0, velocity = 0;
         uint8_t chance = 100, ratchet = 1;
+        uint8_t gate = 6; // 24-PPQN pulses per hit; next hit/step truncates it.
         Lock locks[MaxLocks];
         uint8_t lockCount = 0;
     };
@@ -52,6 +53,7 @@ public:
     static bool validStep(const Step &value) {
         if (value.count > MaxNotes ||
             value.velocity > 127 || value.chance > 100 || value.lockCount > MaxLocks ||
+            value.gate < 1 || value.gate > 6 ||
             !(value.ratchet == 1 || value.ratchet == 2 || value.ratchet == 3 || value.ratchet == 6)) return false;
         for (int i = 0; i < value.count; ++i) {
             if (value.notes[i] > 127) return false;
@@ -148,6 +150,7 @@ public:
     void pulse() {
         if (!play || pulsePhase >= 5) return;
         ++pulsePhase;
+        if (sounding && ++gateAge >= activeStep.gate) releaseNote();
         if (triggered && pulsePhase % (6 / activeStep.ratchet) == 0) {
             releaseNote();
             pressNote();
@@ -183,7 +186,7 @@ private:
     int length = StepsPerPage;
     Step activeStep;
     bool sounding = false, triggered = false;
-    uint8_t pulsePhase = 0;
+    uint8_t pulsePhase = 0, gateAge = 0;
 
     uint8_t roll() {
         uint32_t value;
@@ -202,6 +205,7 @@ private:
         for (int i = 0; i < activeStep.count; ++i)
             output.press(activeStep.notes[i], activeStep.velocity, channel);
         sounding = true;
+        gateAge = 0;
     }
 
     void releaseNote() {

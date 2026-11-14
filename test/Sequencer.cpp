@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <vector>
 #include "Sequencer.h"
+#include "Clock.h"
 
 struct Event { int note, velocity; bool on; };
 std::vector<Event> events;
@@ -229,7 +230,135 @@ void chordBoundsAndLiveOwnership() {
     assert(seq.getStep(0)->count == 1 && seq.getStep(0)->ratchet == 6);
 }
 
+void gatesReleaseBeforeTheNextStep() {
+    for (int gate = 1; gate <= 6; ++gate) {
+        NoteOutput output(send);
+        Sequencer seq(output);
+        seq.setStep(0, 60, 79); seq.setStep(0, 67, 79, true);
+        auto value = *seq.getStep(0); value.gate = gate;
+        assert(seq.setStep(0, value));
+        value.gate = 0; assert(!seq.setStep(0, value));
+        value.gate = 7; assert(!seq.setStep(0, value));
+        seq.start(); expect({{60,79,true},{67,79,true}});
+        for (int pulse = 1; pulse < 6; ++pulse) {
+            seq.pulse();
+            assert(seq.s == 1); // A release is independent of step advancement.
+            if (pulse == gate) expect({{60,0,false},{67,0,false}});
+            else expect({});
+        }
+        seq.step();
+        if (gate == 6) expect({{60,0,false},{67,0,false}});
+        else expect({});
+        seq.stop(); expect({});
+    }
+}
+
+void ratchetGatesAndEditsUseTheActiveSnapshot() {
+    NoteOutput output(send);
+    Sequencer seq(output);
+    seq.setLength(1); seq.setStep(0, 60, 83);
+    auto value = *seq.getStep(0); value.gate = 2; value.ratchet = 2;
+    seq.setStep(0, value); seq.start(); expect({{60,83,true}});
+    value.gate = 5; value.velocity = 117; seq.setStep(0, value);
+    seq.pulse(); expect({});
+    seq.pulse(); expect({{60,0,false}}); // Short gate ends before ratchet at pulse 3.
+    seq.pulse(); expect({{60,83,true}});
+    seq.pulse(); expect({});
+    seq.pulse(); expect({{60,0,false}}); // Second hit still uses old gate/velocity.
+    seq.step(); expect({{60,117,true}});
+    seq.pulse(); seq.pulse(); expect({});
+    seq.pulse(); expect({{60,0,false},{60,117,true}}); // Long gate cut by next ratchet.
+    seq.pulse(); seq.pulse(); expect({});
+    seq.stop(); expect({{60,0,false}});
+    // 3x and 6x intervals are shorter than the gate: one off then on per hit.
+    for (int ratchet : {3, 6}) {
+        value.gate = 5; value.ratchet = ratchet; seq.setStep(0, value);
+        seq.start(); expect({{60,117,true}});
+        for (int pulse = 1; pulse < 6; ++pulse) {
+            seq.pulse();
+            if (ratchet == 6 || pulse == 2 || pulse == 4)
+                expect({{60,0,false},{60,117,true}});
+            else expect({});
+        }
+        seq.stop(); expect({{60,0,false}});
+    }
+    value.gate = 1; value.ratchet = 3; seq.setStep(0, value);
+    seq.start(); expect({{60,117,true}});
+    seq.pulse(); expect({{60,0,false}});
+    seq.pulse(); expect({{60,117,true}});
+    seq.pulse(); expect({{60,0,false}});
+    seq.pulse(); expect({{60,117,true}});
+    seq.pulse(); expect({{60,0,false}});
+    seq.stop(); expect({});
+}
+
+void gateCleanupAndLiveOwners() {
+    for (int operation = 0; operation < 4; ++operation) {
+        NoteOutput output(send);
+        Sequencer seq(output);
+        seq.setStep(0, 60, 93); seq.setStep(0, 64, 93, true);
+        auto value = *seq.getStep(0); value.gate = 2; value.ratchet = 2;
+        seq.setStep(0, value);
+        output.press(64, 71);
+        seq.start(); expect({{64,71,true},{60,93,true}});
+        if (operation == 0) seq.stop();
+        else if (operation == 1) seq.setMuted(true);
+        else if (operation == 2) seq.setLength(3);
+        else { seq.stop(); output.panic(); } // Route/mode change ordering.
+        if (operation == 3) expect({{60,0,false},{64,0,false}});
+        else expect({{60,0,false}});
+        for (int pulse = 0; pulse < 5; ++pulse) seq.pulse();
+        expect({}); // No delayed off or ratchet after cancellation.
+        output.release(64);
+        if (operation == 3) expect({});
+        else expect({{64,0,false}});
+    }
+    NoteOutput output(send); Sequencer seq(output);
+    seq.setStep(0, 60, 90); auto value = *seq.getStep(0); value.gate = 1;
+    seq.setStep(0, value); seq.start(); output.press(60, 65);
+    expect({{60,90,true}});
+    seq.pulse(); expect({}); // Gate releases only the sequencer's ownership.
+    seq.stop(); output.release(60); expect({{60,0,false}});
+}
+
+void gateTimingUsesActualClockPulses() {
+    for (int bpm : {20, 137, 300}) for (uint32_t start : {0U, UINT32_MAX - 4000U}) {
+        NoteOutput output(send); Sequencer seq(output); Clock clk;
+        seq.setStep(0, 72, 101); auto value = *seq.getStep(0); value.gate = 2;
+        seq.setStep(0, value); seq.resume(); clk.setBPM(bpm, start); clk.start(start);
+        assert(clk.poll(start) == Clock::Step); seq.step(); expect({{72,101,true}});
+        // Independently ceil pulse deadlines: checks fractional periods and wrap.
+        const uint32_t rate = uint32_t(bpm * 24);
+        for (uint32_t pulse = 1; pulse <= 3; ++pulse) {
+            const uint32_t deadline = uint32_t((60000000ULL * pulse + rate - 1) / rate);
+            assert(clk.poll(start + deadline - 1) == Clock::None); expect({});
+            assert(clk.poll(start + deadline) == Clock::Pulse); seq.pulse();
+            if (pulse == 2) expect({{72,0,false}}); else expect({});
+        }
+        seq.stop(); expect({});
+    }
+    for (Clock::Source source : {Clock::BLE, Clock::TRS}) {
+        NoteOutput output(send); Sequencer seq(output); Clock clk;
+        seq.setStep(0, 75, 87); auto value = *seq.getStep(0); value.gate = 2;
+        seq.setStep(0, value); seq.resume(); clk.setSource(source); clk.start(0);
+        assert(clk.externalPulse(1000) == Clock::Step); seq.step(); expect({{75,87,true}});
+        assert(clk.poll(100000) == Clock::None); expect({}); // Never guess a gate deadline.
+        assert(clk.externalPulse(125000) == Clock::Pulse); seq.pulse(); expect({});
+        assert(clk.externalPulse(130000) == Clock::Pulse); seq.pulse(); expect({{75,0,false}});
+        seq.stop(); expect({});
+        // A missing master still releases a long gated note through the timeout.
+        value.gate = 6; seq.setStep(0, value); seq.reset(); seq.resume(); clk.start(200000);
+        assert(clk.externalPulse(201000) == Clock::Step); seq.step(); expect({{75,87,true}});
+        assert(clk.poll(700999) == Clock::None);
+        assert(clk.poll(701000) == Clock::Overrun); seq.stop(); expect({{75,0,false}});
+    }
+}
+
 int main() {
+    gatesReleaseBeforeTheNextStep();
+    ratchetGatesAndEditsUseTheActiveSnapshot();
+    gateCleanupAndLiveOwners();
+    gateTimingUsesActualClockPulses();
     restsVelocitiesAndWraparound();
     stopContinueStartAndEdits();
     liveAndSequencedNotesShareOwnership();
