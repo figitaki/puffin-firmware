@@ -23,6 +23,24 @@ public:
     // All tracks' run states change together, including while muted.
     bool playing() const { return tracks[0].play; }
 
+    bool exportTrack(int index, Sequencer::State &state) const {
+        if (index < 0 || index >= TrackCount) return false;
+        tracks[index].exportState(state);
+        return true;
+    }
+
+    template <typename State>
+    bool replaceTracks(const State (&states)[TrackCount]) {
+        for (const auto &state : states)
+            if (!Sequencer::validState(state)) return false;
+        for (int i = 0; i < TrackCount; ++i) {
+            tracks[i].replaceState(states[i]);
+            editSteps[i] = 0;
+        }
+        selected = 0;
+        return true;
+    }
+
     bool selectTrack(int index) {
         if (index < 0 || index >= TrackCount) return false;
         selected = index;

@@ -18,6 +18,7 @@
 //#define CS_USE_NIMBLE
 #include "Clock.h"
 #include "MultiTrackSequencer.h"
+#include "ProjectStorage.h"
 #include <esp_system.h>
 #include <Control_Surface.h>
 #include <MIDI_Interfaces/BluetoothMIDI_Interface.hpp>
@@ -64,6 +65,39 @@ void sendLockedControl(uint8_t control, uint8_t value, uint8_t channel){
 NoteOutput noteOutput(sendOwnedNote, sendLockedControl);
 MultiTrackSequencer seq(noteOutput, esp_random);
 
+LittleFSProjectFiles projectFiles;
+ProjectStore projectStore(projectFiles);
+ProjectSnapshot project;
+bool projectDirty = true, projectBusy = false, projectChanged = false;
+bool projectTransportPaused = false;
+int projectPending = 0, projectPrompt = 0;
+const char *projectNotice = nullptr;
+uint32_t projectNoticeAt = 0;
+
+void showProjectNotice(const char *text) {
+  projectNotice = text;
+  projectNoticeAt = millis();
+}
+
+void updateProjectDirty() {
+  project.capture(seq, uint16_t(clk.internalBPM()));
+  projectDirty = projectStore.dirty(project);
+}
+
+void projectResult(ProjectStore::Result result) {
+  switch(result) {
+    case ProjectStore::Loaded: showProjectNotice("PROJECT LOADED"); break;
+    case ProjectStore::Recovered: showProjectNotice("SAVE RECOVERED"); break;
+    case ProjectStore::Saved: showProjectNotice("PROJECT SAVED"); break;
+    case ProjectStore::Empty: showProjectNotice("NO SAVED PROJECT"); break;
+    case ProjectStore::Corrupt: showProjectNotice("SAVES DAMAGED"); break;
+    case ProjectStore::Unavailable: showProjectNotice("STORAGE ERROR"); break;
+    case ProjectStore::Unsupported: showProjectNotice("NEW FW REQUIRED"); break;
+    case ProjectStore::Ambiguous: showProjectNotice("SAVES CONFLICT"); break;
+    default: showProjectNotice("SAVE FAILED"); break;
+  }
+}
+
 // Channel/SysEx traffic retains the existing bidirectional bridge. Only the
 // selected clock input may forward transport, preventing competing masters
 // from leaking a second clock into the generated internal-clock output.
@@ -71,6 +105,7 @@ class ClockInputPipe : public MIDI_Pipe {
 public:
   explicit ClockInputPipe(Clock::Source source) : source(source) {}
   void mapForwardMIDI(RealTimeMessage message) override {
+    if(projectBusy || projectTransportPaused) return;
     switch(message.getMessageType()) {
       case MIDIMessageType::TimingClock:
       case MIDIMessageType::Start:
@@ -137,7 +172,90 @@ void panicMIDI(){
 }
 
 void setupSequencer(){
-  seq.setStep(0,60,0x6F);
+  // A new identity is used only if no saved project can be restored.
+  esp_fill_random(project.projectID, sizeof(project.projectID));
+  project.projectID[6] = (project.projectID[6] & 0x0f) | 0x40;
+  project.projectID[8] = (project.projectID[8] & 0x3f) | 0x80;
+  if(!projectFiles.begin()) {
+    projectResult(ProjectStore::Unavailable);
+    return; // Never format automatically, including on the first boot.
+  }
+  const auto result = projectStore.load(project);
+  if(result == ProjectStore::Loaded || result == ProjectStore::Recovered) {
+    project.apply(seq);
+    clk.setBPM(project.bpm, micros());
+  }
+  projectResult(result);
+  updateProjectDirty();
+}
+
+// Called after the entire key-event batch, so panic also releases notes from
+// keys pressed in the same scan as Save/Load. Held keys need a fresh press.
+void updateProjectStorage(){
+  if(projectChanged) {
+    updateProjectDirty();
+    projectChanged = false;
+  }
+  const int action = projectPending;
+  projectPending = 0;
+  if(!action) return;
+  if(action == PROJECT_CANCEL) {
+    projectPrompt = 0;
+    showProjectNotice("CANCELLED");
+    return;
+  }
+  if(clk.running() || seq.playing()) {
+    projectPrompt = 0;
+    showProjectNotice("STOP PLAYBACK");
+    return;
+  }
+  int operation = action;
+  bool confirmed = false;
+  if(action == PROJECT_YES) {
+    if(!projectPrompt) return;
+    operation = projectPrompt;
+    confirmed = true;
+    projectPrompt = 0;
+  }
+  if(operation == PROJECT_INIT && !confirmed) {
+    projectPrompt = PROJECT_INIT;
+    return;
+  }
+  updateProjectDirty();
+  if(operation == PROJECT_LOAD && projectDirty && !confirmed) {
+    projectPrompt = PROJECT_LOAD;
+    return;
+  }
+  projectPrompt = 0;
+  projectBusy = true;
+  projectTransportPaused = true;
+  panicMIDI();
+  if(operation == PROJECT_INIT) {
+    if(projectFiles.initialize()) {
+      projectStore.forget();
+      showProjectNotice("STORAGE READY");
+    } else showProjectNotice("STORAGE ERROR");
+  } else if(operation == PROJECT_SAVE) {
+    const auto result = projectStore.save(project, confirmed);
+    if(result == ProjectStore::Corrupt && !confirmed) projectPrompt = PROJECT_SAVE;
+    else projectResult(result);
+  } else if(operation == PROJECT_LOAD) {
+    const auto result = projectStore.load(project);
+    if(result == ProjectStore::Loaded || result == ProjectStore::Recovered) {
+      project.apply(seq);
+      clk.setSource(clk.source()); // Reset phase, retaining the device's source.
+      clk.setBPM(project.bpm, micros());
+      chordEntry = false;
+      stepView = StepNotes;
+      stepFull = false;
+    }
+    projectResult(result);
+  }
+  // Polling is bounded and may leave older transport in another input batch.
+  // Keep external transport paused until a local Start/Continue re-arms it.
+  MIDI_Interface::updateAll();
+  projectBusy = false;
+  updateProjectDirty();
 }
 
 void setupBleSerPipe(){
@@ -179,6 +297,14 @@ void stopNote(int note){
 
 // Process the correct midi function triggered from MIDIMap.h
 void processMIDIPress(int function){
+  if(projectBusy) return;
+  if(function >= PROJECT_SAVE && function <= PROJECT_CANCEL) {
+    if(!projectPending) projectPending = function;
+    return;
+  }
+  projectPrompt = 0; // Unrelated actions cancel destructive confirmations.
+  projectNotice = nullptr;
+  projectChanged = true;
 
   //Serial.println("MIDI FUNCTION: " + String(function));
   int currentBPM = clk.internalBPM();
@@ -200,12 +326,14 @@ void processMIDIPress(int function){
                               : static_cast<MIDI_Interface*>(&midi_ble);
       break;
     case CLOCK_START:
+      projectTransportPaused = false;
       startTransport(true);
       break;
     case CLOCK_STOP:
       stopTransport(true);
       break;
     case CLOCK_CONTINUE:
+      projectTransportPaused = false;
       continueTransport(true);
       break;
     case CLOCK_SOURCE:
@@ -345,6 +473,7 @@ struct MyMIDI_Callbacks : MIDI_Callbacks {
 
   // Callback for real-time messages
   void onRealTimeMessage(MIDI_Interface &input, RealTimeMessage rt) override {
+    if(projectBusy || projectTransportPaused) return;
     const Clock::Source source = &input == &midi_ble ? Clock::BLE : Clock::TRS;
     if(clk.source() != source) return;
     switch(rt.getMessageType()){

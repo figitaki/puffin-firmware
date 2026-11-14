@@ -15,7 +15,7 @@ int MIDIMap[NumLayers][RowCount][ColCount] =
     {'-',              '-',        '-',       MIDI_MODE,     BPM_DEC,     CHANGE_ID0,    CHANGE_ID1,CHANGE_ID2,CHANGE_ID3, '-',        '-',       '-'},
     {'`',          TRACK_1,    TRACK_2,    TRACK_3,   TRACK_4, TRACK_MUTE, TRACK_SHORTER, TRACK_LONGER, EDIT_TOGGLE, EDIT_PAGE_BACK, EDIT_PAGE_NEXT, EDIT_DETAILS},
     {'-', CHANCE_DOWN, CHANCE_UP, RATCHET_DOWN, RATCHET_UP, PLAY_CHORD, LOCK_CC_DOWN, LOCK_CC_UP, LOCK_VALUE_DOWN, LOCK_VALUE_UP, LOCK_CLEAR, EDIT_SET_END},
-    {'-',   'z',        'x',       'c',        'v',       'b',        'n',       'm',        ',',       '.',        '/',       '-'},
+    {'-', PROJECT_SAVE, PROJECT_LOAD, PROJECT_INIT, PROJECT_YES, PROJECT_CANCEL, 'n', 'm', ',', '.', '/', '-'},
     {'-',  '-', '-','-',      ' ',       '-',        ' ',       '-', '-', '-', '-', '-'}
   },
   //  Layer 2 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

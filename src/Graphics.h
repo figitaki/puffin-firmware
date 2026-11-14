@@ -207,6 +207,29 @@ void displayFirmwareUpdate(const char *pin, const uint8_t status[12]) {
   display.display();
 }
 
+bool displayProjectStatus(){
+  if(!projectPrompt && (!projectNotice || uint32_t(millis() - projectNoticeAt) >= 5000)) return false;
+  display.clearDisplay(); // Project confirmations use the entire small OLED.
+  display.setFont(&Font5x7FixedMono);
+  display.setTextSize(1);
+  display.setCursor(0, 8);
+  if(projectPrompt == PROJECT_LOAD) display.print("DISCARD EDITS?");
+  else if(projectPrompt == PROJECT_INIT) display.print("ERASE STORAGE?");
+  else if(projectPrompt == PROJECT_SAVE) display.print("REPLACE FILES?");
+  else display.print(projectNotice);
+  display.setCursor(0, 19);
+  if(projectPrompt == PROJECT_INIT) display.print("ALL PROJECTS LOST");
+  else if(projectPrompt == PROJECT_LOAD) display.print("LOAD LAST SAVE");
+  else if(projectPrompt == PROJECT_SAVE) display.print("OLD SAVES OVERWRITE");
+  else if(projectNotice && !strcmp(projectNotice, "STORAGE ERROR")) display.print("FN+C STORAGE SETUP");
+  else display.print(projectDirty ? "UNSAVED *" : "SAVED");
+  display.setCursor(0, 30);
+  if(projectPrompt) display.print("FN+V YES / FN+B NO");
+  else if(projectTransportPaused) display.print("START/CONT TO RESUME");
+  else display.print("FN+Z SAVE / FN+X LOAD");
+  return true;
+}
+
 void displayStepEditor(){
   display.setFont(&Font5x7FixedMono);
   display.setTextSize(1);
@@ -292,11 +315,18 @@ void mainScreenUpdate() {
   updateBatteryGraphic(getBattLevel());
 
 
+  bool projectScreen = false;
   if(midiMode){
-    if(stepEditing) displayStepEditor();
-    else {
-      displayMIDI();
-      displayBPM();
+    projectScreen = displayProjectStatus();
+    if(!projectScreen) {
+      if(stepEditing) displayStepEditor();
+      else {
+        displayMIDI();
+        displayBPM();
+      }
+      display.setFont(&Font5x7FixedMono);
+      display.setCursor(stepEditing ? 72 : 24, 8);
+      if(projectDirty) display.print("*");
     }
   } else { // if kb mode, display wpm and puffin guy
     // display current wpm
@@ -305,8 +335,8 @@ void mainScreenUpdate() {
     // add puffin icon
     display.drawBitmap(40, 0, puffinWaveAnim[frame], FRAME_WIDTH, FRAME_HEIGHT, 1);
   }
-  // add bluetooth status icon
-  displayBTStatus();
+  // Project confirmation text takes precedence over status icons.
+  if(!projectScreen) displayBTStatus();
 
   displayTransfer.beginFrame();
   frame = (frame + 1) % FRAME_COUNT_PUFFIN;

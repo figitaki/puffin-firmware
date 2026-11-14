@@ -366,6 +366,7 @@ void loop() {
   while (keyInput.nextEvent(midiMode ? MIDIMap : Layout, event)) {
     handleKeyEvent(event);
   }
+  if(midiMode) updateProjectStorage();
   updateKeymapConsole();
   
   //Delay so it's not too fast

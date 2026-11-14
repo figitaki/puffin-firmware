@@ -193,7 +193,7 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isr
 /tmp/puffin-sequencer-tests
 ```
 
-There is no independent gate scheduler or project storage.
+There is no independent gate scheduler. Project storage is described below.
 BLE pairing, UART wiring, actual note delivery, and the OLED route indicator need
 validation on the board; host tests establish state/message behavior only.
 
@@ -203,7 +203,8 @@ Four tracks, each with up to four notes per step, run on MIDI channels 1–4, sh
 Start/Stop/Continue controls. Each has its own pattern, 1–64-step length (default
 16: one page), next-step position, and mute state. A page contains 16 steps;
 tracks can use one through four pages. Different lengths loop independently.
-Only track 1 contains the prototype's initial C note; the others start empty.
+A new project starts with all four tracks empty. MIDI-mode boot restores the
+last saved project when storage is available, always with playback stopped.
 
 In MIDI mode, hold Fn and use these typing-key positions:
 
@@ -226,8 +227,8 @@ resumes from those positions. Attempts beyond 1–4 pages do nothing, including 
 playback running. Shortening hides, rather than erases, steps beyond the new
 length. Adding/removing a page sets a full-page length: 16, 32, 48, or 64 steps.
 For example, a 19-step pattern has two pages; Fn+Y makes it 16 steps and Fn+U
-makes it 48 steps. No settings or patterns survive restart yet. Typing-mode maps
-are unchanged.
+makes it 48 steps. Explicit project saves include lengths and hidden steps.
+Typing-mode maps are unchanged.
 
 ### Onboard step editor
 
@@ -267,8 +268,8 @@ Battery, charging, and Bluetooth indicators remain visible.
 Fn+Q/W/E/R, Fn+T, Fn+Y/U, transport, and Down (output route) retain their
 existing functions. Outside the editor, note keys only record while running
 and Return still clears the next playback step. Outside the editor, recording
-still replaces that step with one note. Editing is volatile: there is no
-velocity/gate editor, undo, or pattern persistence yet.
+still replaces that step with one note. Edits remain unsaved until an explicit
+project save. There is no velocity/gate editor or undo yet.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -330,7 +331,59 @@ Editing these settings automatically selects their detail view. Running edits
 apply on the next visit: the sounding chord and its pending ratchets are a
 snapshot. Stop, mute, resize, route changes, and lost-clock handling release the
 sequence's notes and cancel remaining ratchets. Continue waits until the next
-step to sound a new chord. None of these patterns/settings survive reboot yet.
+step to sound a new chord. Explicit project saves retain these step settings.
+
+## Project Save/Load
+
+One project holds all four tracks, their lengths/mutes, all 64 steps per track
+(including hidden pages), chords, shared velocity, chance, ratchets, CC locks,
+and internal tempo. Clock source/output route, held notes, transport position,
+editor tools, typing maps, and Bluetooth identities are not project content.
+A `*` in either MIDI view marks unsaved musical changes; returning to the saved
+content clears it. No autosave or per-note flash writes occur.
+
+In MIDI mode, hold Fn and use these physical positions, in either MIDI view:
+
+| Position | Action |
+| --- | --- |
+| Z | Save the current project |
+| X | Load the last saved project; asks before discarding unsaved changes |
+| C | Open project-storage initialization (erases **all files in the data partition**) |
+| V | Confirm the displayed question |
+| B | Cancel the question/notice |
+
+Save, Load, and initialization require stopped playback. They release local
+live notes, retain output/clock-source selection, and never restart playback.
+After an operation, press the board's Start or Continue to re-arm transport,
+including when following an external clock. Buffered external transport is
+ignored until then; incoming MIDI cannot unexpectedly resume after storage.
+Unrelated MIDI actions cancel a pending confirmation. Release and press held
+performance keys again after an operation. MIDI-thru continuity during flash
+writes is not guaranteed. Load resets track selection, edit cursors and
+playheads to track 1/step 1 and restores tempo; it does not reset external CC
+receiver state (including sustain). Boot restores music only when starting MIDI
+mode, always stopped; there is no demo note in a blank project.
+
+**First use:** an unformatted or unreadable data partition shows `STORAGE ERROR`.
+It is never formatted automatically. Only if you intend to erase that partition,
+stop playback, press Fn+C, read `ERASE STORAGE? / ALL PROJECTS LOST`, then Fn+V.
+After `STORAGE READY`, press Fn+Z to save your current music. Fn+B cancels. If a
+previous firmware used the partition, back up its contents first. This operation
+does not erase typing settings, Bluetooth bonds, or firmware OTA slots.
+
+Two independently checked files retain the latest and previous changed saves.
+A damaged latest snapshot falls back to a valid previous save with `SAVE RECOVERED`.
+If neither is valid, Save asks before replacing damaged files. A recognized
+unsupported schema shows `NEW FW REQUIRED` and blocks both ordinary and confirmed
+Save; it is never silently overwritten. Initialization is a separate destructive
+action, not a recovery shortcut. Failed writes show `SAVE FAILED`, retain the
+unsaved marker, and leave the previous committed snapshot untouched.
+
+The fixed v1 format, storage policy, limitations, and physical power-loss
+acceptance checklist are in [Project persistence](docs/project-persistence.md).
+Software checks do **not** establish real-board flash durability or uninterrupted
+MIDI delivery. Physical save/reboot/power-cut and updater-preservation tests remain
+required before relying on this for performances.
 
 ## Standalone transport and clock
 
@@ -349,7 +402,7 @@ Typing-mode bindings are unchanged. Fn+Esc retains the mode-switch/restart
 binding. The down-arrow position (row 4, column 10) still selects note output
 BLE/TRS independently of clock input. Source changes stop playback and reset
 pulse phase; Continue can resume the retained next step, or Start resets to zero.
-These settings/patterns are not persisted yet.
+Project saves retain internal tempo and patterns, but not clock source or output route.
 
 Internal clock defaults to 120 BPM, supports 20–300 BPM, and emits 24 pulses per
 quarter note. Each sixteenth note advances every six clocks. Start/Continue send
