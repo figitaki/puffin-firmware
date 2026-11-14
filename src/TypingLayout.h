@@ -5,6 +5,7 @@
 
 // Preset IDs are persisted: keep their numeric values stable.
 // Presets change letter/punctuation positions; user overrides apply afterward.
+// Colemak is the Colemak-DH base layer from figitaki/qmk_firmware crkbd/keymaps/figitaki.
 // Fn and the upper layers remain physical-position recovery bindings.
 class TypingLayout {
 public:
@@ -24,7 +25,7 @@ public:
         if (preset < 0 || preset >= Count) return false;
         static const char rows[Count][3][11] = {
             {"qwertyuiop", "asdfghjkl;", "zxcvbnm,./"},
-            {"qwfpgjluy;", "arstdhneio", "zxcvbkm,./"},
+            {"qwfpbjluy;", "arstgmneio", "zxcdvkh,./"},
             {"',.pyfgcrl", "aoeuidhtns", ";qjkxbmwvz"}
         };
         for (int row = 0; row < RowCount; ++row) {
