@@ -51,3 +51,19 @@ jobs:
           /tmp/puffin-pattern-tests
       - name: Build ProS3 firmware
         run: pio run --environment ProS3
+      - name: Package OTA application image
+        # Application-only image accepted by the BLE updater; never a merged flash image.
+        run: |
+          mkdir -p dist
+          cp .pio/build/ProS3/firmware.bin dist/firmware.bin
+          (cd dist && sha256sum firmware.bin > firmware.bin.sha256 && sha256sum --check firmware.bin.sha256)
+      - name: Upload OTA application artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: puffin-ProS3-${{ github.sha }}
+          path: |
+            dist/firmware.bin
+            dist/firmware.bin.sha256
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true

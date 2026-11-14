@@ -22,6 +22,11 @@ deliberately and verify the complete build before changing the pins.
 GitHub Actions builds the ProS3 target on pushes and pull requests. A successful
 build checks compilation and linking, not electrical behavior, BLE pairing,
 matrix scanning, or MIDI timing; those still need testing on the actual board.
+Each run uploads the ProS3 application `firmware.bin` and its SHA-256 as a
+downloadable artifact, and publishing a GitHub release attaches a versioned image,
+checksums, an updater manifest, and build-provenance attestations. See
+[downloading firmware](docs/firmware-artifacts.md) for installation, verification,
+and what those attestations do and do not guarantee.
 
 ## Development Bluetooth firmware updater
 
