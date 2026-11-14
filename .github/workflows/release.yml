@@ -1,0 +1,158 @@
+name: Firmware release
+
+# Runs when a release is published; it never creates or publishes a release.
+# The workflow definition comes from the commit the release tag points at, so
+# that commit must already contain this file. See docs/firmware-artifacts.md.
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: firmware-release-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  pros3:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # upload assets to the existing release
+      id-token: write # GitHub OIDC token for the provenance signature
+      attestations: write # store the build-provenance attestation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name }}
+      RELEASE_BODY: ${{ github.event.release.body }}
+      RELEASE_SHA: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash # -eo pipefail
+    steps:
+      - name: Validate release tag
+        id: names
+        run: |
+          version="${TAG#v}"
+          if [[ ! "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._-]{0,39}$ ]]; then
+            echo "::error::Release tag must be v?<1-40 of [0-9A-Za-z._-]> starting with a letter or digit."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/tags/$TAG" ]]; then
+            echo "::error::Unexpected ref $GITHUB_REF for release tag."
+            exit 1
+          fi
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$TAG" --jq .sha)
+          if [[ "$tagged" != "$RELEASE_SHA" ]]; then
+            echo "::error::Tag now points at $tagged, not the released commit $RELEASE_SHA."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "image=puffin-ProS3-$version.bin"
+            echo "sums=puffin-ProS3-$version.sha256"
+            echo "manifest=puffin-ProS3-manifest.json"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Confirm released commit
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      # No dependency cache: release images are built from a clean toolchain install.
+      - name: Install PlatformIO Core
+        run: python -m pip install platformio==6.1.18
+      - name: Build ProS3 firmware
+        run: pio run --environment ProS3
+      - name: Package image, checksums, and update manifest
+        env:
+          VERSION: ${{ steps.names.outputs.version }}
+          IMAGE: ${{ steps.names.outputs.image }}
+          SUMS: ${{ steps.names.outputs.sums }}
+          MANIFEST: ${{ steps.names.outputs.manifest }}
+        run: |
+          mkdir dist
+          cp .pio/build/ProS3/firmware.bin "dist/$IMAGE"
+          size=$(stat -c %s "dist/$IMAGE")
+          sha=$(sha256sum "dist/$IMAGE" | cut -d ' ' -f 1)
+          # Application images start with the ESP image magic byte 0xE9.
+          if [[ "$(head -c 1 "dist/$IMAGE" | od -An -tx1 | tr -d ' ')" != "e9" ]]; then
+            echo "::error::$IMAGE is not an ESP application image."
+            exit 1
+          fi
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$IMAGE"
+          # Same schema as ios/PuffinUpdater FirmwareRelease; extra keys are ignored by the app.
+          # Notes are the release body's "- " or "* " bullet lines (at most 12, 300 characters each).
+          jq -n --arg version "$VERSION" --arg tag "$TAG" --arg commit "$RELEASE_SHA" \
+            --arg file "$IMAGE" --arg url "$url" --argjson size "$size" --arg sha256 "$sha" \
+            --arg body "$RELEASE_BODY" '{
+              version: $version,
+              notes: ($body | split("\n") | map(sub("\r$"; ""))
+                | map(select(test("^\\s*[-*]\\s+\\S"))) | map(sub("^\\s*[-*]\\s+"; ""))
+                | .[:12] | map(.[:300])),
+              target: "ProS3",
+              url: $url,
+              size: $size,
+              sha256: $sha256,
+              file: $file,
+              tag: $tag,
+              commit: $commit
+            }' > "dist/$MANIFEST"
+          # Mirror the updater's FirmwareRelease.decode checks so an incompatible manifest fails here.
+          jq -e --arg sha "$sha" --argjson size "$size" '
+            (.version | length) >= 1 and (.version | length) <= 40
+            and .target == "ProS3"
+            and .size == $size and .size >= 33 and .size <= 8388608
+            and .sha256 == $sha and (.sha256 | test("^[0-9a-f]{64}$"))
+            and (.url | startswith("https://github.com/"))
+            and (.notes | length) <= 12 and all(.notes[]; length <= 300)
+          ' "dist/$MANIFEST" > /dev/null
+          (cd dist && sha256sum "$IMAGE" "$MANIFEST" > "$SUMS" && sha256sum --check "$SUMS")
+          {
+            echo "### ProS3 release assets for $TAG"
+            echo
+            echo "Commit: \`$RELEASE_SHA\`"
+            echo
+            echo '```'
+            cat "dist/$SUMS"
+            echo "$IMAGE: $size bytes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Refuse to replace different published assets
+        # Reruns upload only missing assets. An asset that already exists must match
+        # the rebuilt bytes exactly or the job fails; delete the old assets by hand
+        # to republish deliberately.
+        run: |
+          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          mkdir published
+          : > upload-list
+          for path in dist/*; do
+            name="${path#dist/}"
+            if grep -Fxq -- "$name" <<< "$existing"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir published
+              if ! cmp -s "$path" "published/$name"; then
+                echo "::error::Release asset $name already exists with different bytes; not replacing it."
+                exit 1
+              fi
+              echo "$name is already published with identical bytes."
+            else
+              echo "$path" >> upload-list
+            fi
+          done
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/${{ steps.names.outputs.image }}
+            dist/${{ steps.names.outputs.sums }}
+            dist/${{ steps.names.outputs.manifest }}
+      - name: Upload assets to the release
+        run: |
+          mapfile -t files < upload-list
+          if (( ${#files[@]} == 0 )); then
+            echo "All assets were already published."
+            exit 0
+          fi
+          gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY"
