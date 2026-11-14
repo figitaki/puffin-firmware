@@ -47,7 +47,8 @@ struct ProjectSnapshot {
 
 class ProjectCodec {
 public:
-    static const size_t HeaderSize = 32, PayloadSize = 4655, Size = 4687;
+    static const size_t HeaderSize = 32, PayloadSize = 4687, Size = 4719;
+    static const size_t V3PayloadSize = 4655, V3Size = 4687;
     static const size_t V2PayloadSize = 4654, V2Size = 4686;
     static const size_t V1PayloadSize = 4398, V1Size = 4430;
     enum Result { Valid, Invalid, Unsupported };
@@ -69,7 +70,7 @@ public:
         if (!data || size != Size || !generation || !snapshot.valid()) return false;
         memset(data, 0, Size);
         memcpy(data, "PFNP", 4);
-        put(data + 4, 3, 2);
+        put(data + 4, 4, 2);
         put(data + 6, HeaderSize, 2);
         put(data + 8, PayloadSize, 4);
         put(data + 12, generation, 8);
@@ -96,6 +97,11 @@ public:
             }
         }
         *p++ = snapshot.swing;
+        // Track-major, LSB-first bitmap; all existing v3 payload offsets stay fixed.
+        for (int t = 0; t < 4; ++t)
+            for (int s = 0; s < 64; ++s)
+                if (snapshot.tracks[t].steps[s].tie)
+                    p[t * 8 + s / 8] |= uint8_t(1u << (s % 8));
         put(data + 24, crc32(data, Size, true), 4);
         return true;
     }
@@ -106,8 +112,9 @@ public:
         // Protect unknown versions even if the rest of their record is malformed.
         if (size < 6) return Invalid;
         const uint64_t version = get(data + 4, 2);
-        if (version != 1 && version != 2 && version != 3) return Unsupported;
-        const size_t recordSize = version == 1 ? V1Size : version == 2 ? V2Size : Size;
+        if (version != 1 && version != 2 && version != 3 && version != 4) return Unsupported;
+        const size_t recordSize = version == 1 ? V1Size : version == 2 ? V2Size :
+                                  version == 3 ? V3Size : Size;
         const size_t stepSize = version == 1 ? 17 : 18;
         if (size != recordSize || get(data + 6, 2) != HeaderSize ||
             get(data + 8, 4) != recordSize - HeaderSize || !get(data + 12, 8) ||
@@ -132,7 +139,8 @@ public:
                 if (!Sequencer::validStep(step)) return Invalid;
             }
         }
-        if (version == 3 && *p > 2) return Invalid;
+        if (version >= 3 && *p > 2) return Invalid;
+        // Every bitmap bit represents a bool, so it has no invalid encodings.
         p = data + HeaderSize;
         memcpy(out.projectID, p, 16); p += 16;
         out.patternID = uint32_t(get(p, 4)); p += 4;
@@ -143,7 +151,11 @@ public:
             track.muted = *p++ != 0;
             for (auto &step : track.steps) { readStep(p, step, version >= 2); p += stepSize; }
         }
-        out.swing = version == 3 ? *p : 0;
+        out.swing = version >= 3 ? *p++ : 0;
+        if (version == 4)
+            for (int t = 0; t < 4; ++t)
+                for (int s = 0; s < 64; ++s)
+                    out.tracks[t].steps[s].tie = (p[t * 8 + s / 8] & (1u << (s % 8))) != 0;
         generation = get(data + 12, 8);
         return Valid;
     }
@@ -160,7 +172,8 @@ public:
                 const auto &u = x.steps[s];
                 const auto &v = y.steps[s];
                 if (u.count != v.count || u.velocity != v.velocity || u.chance != v.chance ||
-                    u.ratchet != v.ratchet || u.lockCount != v.lockCount || u.gate != v.gate) return false;
+                    u.ratchet != v.ratchet || u.lockCount != v.lockCount || u.gate != v.gate ||
+                    u.tie != v.tie) return false;
                 // Bound even malformed caller objects; equality is not validation.
                 for (int i = 0; i < u.count && i < 4; ++i)
                     if (u.notes[i] != v.notes[i]) return false;

@@ -162,7 +162,7 @@ int main(int argc, char **) {
     reset();
     auto &rich = state.tracks[2].steps[63];
     rich.count = 3; rich.notes[0] = 61; rich.notes[1] = 68; rich.notes[2] = 72;
-    rich.velocity = 93; rich.chance = 37; rich.ratchet = 6; rich.gate = 2;
+    rich.velocity = 93; rich.chance = 37; rich.ratchet = 6; rich.gate = 2; rich.tie = true;
     rich.lockCount = 2; rich.locks[0].control = 74; rich.locks[0].value = 91;
     rich.locks[1].control = 1; rich.locks[1].value = 15;
     state.swing = 2; sync.observe(state);
@@ -172,7 +172,7 @@ int main(int argc, char **) {
     call(5,t); okay(5); assert(reply.appliedTrack == 2 && rich.notes[0] == 62 && rich.velocity == 101);
     assert(state.tracks[2].length == 49 && state.tracks[2].muted && state.swing == 2);
     assert(rich.notes[1] == 68 && rich.notes[2] == 72 && rich.count == 3);
-    assert(rich.chance == 37 && rich.ratchet == 6 && rich.gate == 2 && rich.lockCount == 2);
+    assert(rich.chance == 37 && rich.ratchet == 6 && rich.gate == 2 && rich.tie && rich.lockCount == 2);
     assert(rich.locks[0].value == 91 && rich.locks[1].value == 15);
     const uint32_t committed = sync.currentRevision();
     Bytes commit = frame(5,t,requestID);
@@ -201,12 +201,13 @@ int main(int argc, char **) {
     assert(chord.count == 2 && chord.notes[1] == 67 && chord.velocity == 0);
 
     // CAS rejects local edits, including hidden expression, tempo, swing, and identity.
-    for (int kind = 0; kind < 4; ++kind) {
+    for (int kind = 0; kind < 5; ++kind) {
         reset(); call(3,begin()); t = token(); call(4,chunk(t,0,{65,98}));
         if (kind == 0) state.tracks[3].steps[63].gate = 1;
         if (kind == 1) state.bpm = 137;
         if (kind == 2) state.swing = 1;
         if (kind == 3) state.projectID[1] = 2;
+        if (kind == 4) state.tracks[3].steps[63].tie = true;
         call(5,t); error(PatternSync::Conflict); assert(state.tracks[0].steps[0].count == 0);
     }
     reset(); auto stale = begin(); state.bpm = 125; sync.observe(state);

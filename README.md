@@ -306,8 +306,8 @@ not the sequenced gate.
 
 A gate ends after its pulse count or at the next ratchet/step hit, whichever
 comes first. For example, gate 1 with 2x ratchets sends on/off at pulse 0/1 and
-3/4; gate 5 with 2x ratchets is cut at pulse 3 and at the next step. There are no
-ties or notes held across step boundaries. Gate expiry, Stop, mute, resize and
+3/4; gate 5 with 2x ratchets is cut at pulse 3 and at the next step. A following
+continuation tie extends the final hit instead (see below). Gate expiry, Stop, mute, resize and
 lost-clock handling release only sequence ownership and cancel pending sequence
 hits as appropriate. Route/mode changes panic all local owners on the old route.
 Receiver sustain/CC state can still hold sound.
@@ -349,11 +349,11 @@ Internal 48-PPQN ticks are about 62.5 ms at 20 BPM, 9.12 ms at 137 BPM and
 Two pending internal ticks cause a safe transport stop rather than a catch-up
 burst, so the main-loop stall budget is tighter than the old 24-PPQN scheduler.
 
-New saves use schema v3 with global swing plus all 256 gates. V1/v2 projects
-load read-only with straight swing (v1 also supplies gate 6). The first explicit
-Save writes v3 to the other generation slot, retaining the legacy recovery copy;
-older firmware cannot load v3 and refuses ordinary overwrites. Back up before
-downgrading.
+New saves use schema v4 with ties, global swing and all 256 gates. V1/v2/v3
+projects load with ties off; v1/v2 also supply straight swing (v1 supplies gate 6).
+The first explicit Save writes v4 to the other generation slot, retaining the
+legacy recovery copy; older firmware cannot load v4 and refuses ordinary
+overwrites. Back up before downgrading.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -361,6 +361,31 @@ controls, display, and received MIDI on a board.
 g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/MultiTrackSequencer.cpp -o /tmp/puffin-multitrack-tests
 /tmp/puffin-multitrack-tests
 ```
+
+### Sustained notes and continuation ties
+
+In the step editor, **Fn+Space** toggles the selected step into a continuation
+(`TIE` on the OLED, a short horizontal mark in the step strip). Enter a note or
+chord on step 1, then mark steps 2 and 3 as ties: the original note/chord holds
+through all three steps without new Note On messages. An ordinary rest ends the
+chain; an ordinary note step releases and re-triggers normally. Ties can cross
+pages and the pattern wrap. Start or Continue into a tie with no sounding
+sequence note stays silent until an ordinary note step.
+
+A following tie extends the source's final hit even if its gate is short.
+Earlier ratchet hits retain their normal gates; only the final hit is held.
+The continuation's stored note/velocity/chance/ratchet/gate fields are retained
+but do not generate attacks; its CC locks still run once when unmuted. A source
+that misses its chance does not acquire a note on a tie. Stop, mute, resize,
+clock loss and route changes retain their usual safe release behavior. Running
+edits do not retroactively change the active hit's latched continuation.
+
+Toggle tie off to restore its retained note settings, enter a note to replace
+the tie, or press Return to clear the step. Ties are saved for all 256 slots,
+including hidden pages. Schema v4 adds a compact tie bitmap while retaining
+v1/v2/v3 readers; first explicit Save migrates the alternate generation slot.
+The SysEx profile1 note/velocity projection preserves ties but cannot edit or
+fully represent them. Keyboard octave offset is still not project content.
 
 ### Chance, ratchets, chords, and parameter locks
 

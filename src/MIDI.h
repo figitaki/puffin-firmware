@@ -379,6 +379,15 @@ void processMIDIPress(int function){
       stepEditing = !stepEditing;
       stepFull = false;
       break;
+    case TIE_TOGGLE:
+      if(stepEditing) {
+        Sequencer::Step value = *seq.getStep(seq.editStep());
+        value.tie = !value.tie;
+        seq.setStep(seq.editStep(), value);
+        stepFull = false;
+        stepView = StepNotes;
+      }
+      break;
     case EDIT_DETAILS:
       if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 6);
       break;
