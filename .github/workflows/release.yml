@@ -23,7 +23,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.event.release.tag_name }}
-      RELEASE_BODY: ${{ github.event.release.body }}
       RELEASE_SHA: ${{ github.sha }}
     defaults:
       run:
@@ -85,12 +84,12 @@ jobs:
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$IMAGE"
           # Same schema as ios/PuffinUpdater FirmwareRelease; extra keys are ignored by the app.
           # Notes are the release body's "- " or "* " bullet lines (at most 12, 300 characters each),
-          # taken from the event payload: reruns reuse the description as originally published.
-          jq -n --arg version "$VERSION" --arg tag "$TAG" --arg commit "$RELEASE_SHA" \
-            --arg file "$IMAGE" --arg url "$url" --argjson size "$size" --arg sha256 "$sha" \
-            --arg body "$RELEASE_BODY" '{
+          # read from the event payload file (reruns reuse the description as originally published;
+          # a large body in an environment variable could exceed Linux's argument-size limit).
+          jq --arg version "$VERSION" --arg tag "$TAG" --arg commit "$RELEASE_SHA" \
+            --arg file "$IMAGE" --arg url "$url" --argjson size "$size" --arg sha256 "$sha" '{
               version: $version,
-              notes: ($body | split("\n") | map(sub("\r$"; ""))
+              notes: (.release.body // "" | split("\n") | map(sub("\r$"; ""))
                 | map(select(test("^\\s*[-*]\\s+\\S"))) | map(sub("^\\s*[-*]\\s+"; ""))
                 | .[:12] | map(.[:300])),
               target: "ProS3",
@@ -100,7 +99,7 @@ jobs:
               file: $file,
               tag: $tag,
               commit: $commit
-            }' > "dist/$MANIFEST"
+            }' "$GITHUB_EVENT_PATH" > "dist/$MANIFEST"
           # Mirror the updater's FirmwareRelease.decode checks so an incompatible manifest fails here.
           jq -e --arg sha "$sha" --argjson size "$size" '
             (.version | length) >= 1 and (.version | length) <= 40
