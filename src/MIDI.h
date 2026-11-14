@@ -38,6 +38,7 @@ const uint8_t velocity = 0x7F;
 bool midiMode;
 bool bridgeBLEtoSER = true;
 bool serialOutput = false;
+bool stepEditing = false;
 
 bool activeNotes[12] = {false};
 uint8_t liveChannels[128] = {}; // Capture press-time channel across track changes.
@@ -177,7 +178,8 @@ void processMIDIPress(int function){
     int noteToPlay = function-241;
     activeNotes[noteToPlay%12] = true;
     playNote(noteToPlay, velocity);
-    if(seq.playing()){ seq.setStep(-1,noteToPlay,velocity); }
+    if(stepEditing) seq.setStep(seq.editStep(),noteToPlay,velocity);
+    else if(seq.playing()) seq.setStep(-1,noteToPlay,velocity);
   }
   switch (function){
     case SW_OUTPUT:
@@ -215,6 +217,24 @@ void processMIDIPress(int function){
     case TRACK_LONGER:
       if(seq.setLength(seq.length() + 1)) stopTransport(true);
       break;
+    case EDIT_TOGGLE:
+      stepEditing = !stepEditing;
+      break;
+    case EDIT_PREVIOUS:
+    case EDIT_NEXT:
+    case EDIT_PAGE_BACK:
+    case EDIT_PAGE_NEXT:
+      if(stepEditing) {
+        const int direction = function == EDIT_PREVIOUS || function == EDIT_PAGE_BACK ? -1 : 1;
+        int target = (seq.editStep() + direction + seq.length()) % seq.length();
+        if(function == EDIT_PAGE_BACK || function == EDIT_PAGE_NEXT) {
+          const int pages = (seq.length() + 15) / 16;
+          const int page = (seq.editStep() / 16 + direction + pages) % pages;
+          target = min(page * 16 + seq.editStep() % 16, seq.length() - 1);
+        }
+        seq.selectStep(target);
+      }
+      break;
     case BPM_INC:
       clk.setBPM(currentBPM + 1, micros());
       break;
@@ -228,7 +248,8 @@ void processMIDIPress(int function){
       playChord();
       break;
     case SEQ_CLEAR:
-      seq.clear();
+      if(stepEditing) seq.setStep(seq.editStep(),0,0);
+      else seq.clear();
       //chord.constructAtRoot()
   }
 }
