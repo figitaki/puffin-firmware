@@ -122,6 +122,8 @@
 #define LOCK_VALUE_UP  373
 #define LOCK_CLEAR     374
 #define EDIT_DETAILS   375
+#define VELOCITY_DOWN  376
+#define VELOCITY_UP    377
 #define PROJECT_SAVE   380
 #define PROJECT_LOAD   381
 #define PROJECT_INIT   382

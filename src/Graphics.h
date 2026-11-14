@@ -242,7 +242,9 @@ void displayStepEditor(){
   const Sequencer::Step &value = *seq.getStep(seq.editStep());
   display.setCursor(24, 19);
   if(stepFull) display.print("FULL");
-  else if(stepView == StepTrigger) {
+  else if(stepView == StepVelocity) {
+    display.print(String("V") + String(value.velocity) + (value.count ? "" : " REST"));
+  } else if(stepView == StepTrigger) {
     display.print(String("C") + String(value.chance) + " R" + String(value.ratchet) + " N" + String(value.count));
   } else if(stepView == StepControl) {
     int lockValue = -1;
@@ -253,7 +255,7 @@ void displayStepEditor(){
   } else {
     display.print(String(seq.editStep() + 1) + "/" + String(seq.length()) + " " +
                   (value.count > 1 ? String(value.count) + "N" :
-                   velocity ? String("N") + String(note) : String("REST")));
+                   value.count && velocity ? String("N") + String(note) : String("REST")));
   }
   display.setCursor(88, 19);
   display.print(clk.getBPM() ? String(clk.getBPM()) : String("--"));
@@ -264,7 +266,7 @@ void displayStepEditor(){
   for(int index = first; index < first + Sequencer::StepsPerPage && index < seq.length(); ++index) {
     const int x = 24 + (index - first) * 6;
     seq.getStep(index, note, velocity);
-    if(velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
+    if(seq.getStep(index)->count && velocity) display.fillRect(x + 1, 26, 3, 3, SSD1306_WHITE);
     else if(seq.getStep(index)->lockCount) display.drawRect(x + 1, 26, 3, 3, SSD1306_WHITE);
     else display.drawPixel(x + 2, 29, SSD1306_WHITE);
     if(index == seq.editStep()) display.drawRect(x, 24, 6, 7, SSD1306_WHITE);

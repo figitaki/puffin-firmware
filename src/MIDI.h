@@ -42,7 +42,7 @@ bool bridgeBLEtoSER = true;
 bool serialOutput = false;
 bool stepEditing = false;
 bool chordEntry = false;
-enum StepView { StepNotes, StepTrigger, StepControl };
+enum StepView { StepNotes, StepTrigger, StepControl, StepVelocity };
 StepView stepView = StepNotes;
 uint8_t editControl = 74; // MIDI brightness/filter cutoff by convention.
 bool stepFull = false;
@@ -311,7 +311,8 @@ void processMIDIPress(int function){
 
   // if function is between 300 and 320, play that respective note
   if(293 < function && function < 314){
-    const uint8_t velocity = 0x5F;
+    const uint8_t storedVelocity = stepEditing ? seq.getStep(seq.editStep())->velocity : 0;
+    const uint8_t velocity = storedVelocity ? storedVelocity : 95;
     int noteToPlay = function-241;
     activeNotes[noteToPlay%12] = true;
     playNote(noteToPlay, velocity);
@@ -366,7 +367,19 @@ void processMIDIPress(int function){
       stepFull = false;
       break;
     case EDIT_DETAILS:
-      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 3);
+      if(stepEditing) stepView = static_cast<StepView>((stepView + 1) % 4);
+      break;
+    case VELOCITY_DOWN:
+    case VELOCITY_UP:
+      if(stepEditing) {
+        Sequencer::Step value = *seq.getStep(seq.editStep());
+        // Zero remains a valid stored silent value, but the editor uses 1–127.
+        const int previous = value.velocity ? value.velocity : 95;
+        value.velocity = constrain(previous + (function == VELOCITY_UP ? 1 : -1), 1, 127);
+        seq.setStep(seq.editStep(), value);
+        stepFull = false;
+        stepView = StepVelocity;
+      }
       break;
     case CHANCE_DOWN:
     case CHANCE_UP:
