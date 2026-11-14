@@ -43,7 +43,7 @@ int Layout[NumLayers][RowCount][ColCount] =
     {'`',               '1',          '2',          '3',        '4',       '5',         '6',        '7',        '8',          '9',            '0',            KEY_BACKSPACE},
     {KEY_CAPS_LOCK,     'a',          's',          '[',        '(',       '{',         '}',        ')',        ']',          '-',            '\'',           KEY_RETURN},
     {KEY_LEFT_SHIFT,    'z',          'x',          'c',        'v',       'b',         'n',        'm',        '-',          '=',            '/',            '\\'},
-    {KEY_LEFT_CTRL,     KEY_LEFT_ALT, KEY_LEFT_GUI, '-',        ' ',       '-',         ' ',        '-',        FUNCTION_SW,  KEY_LEFT_ARROW, KEY_DOWN_ARROW, KEY_RIGHT_ARROW}
+    {KEY_LEFT_CTRL,     KEY_LEFT_ALT, FUNCTION_SW2, '-',        ' ',       '-',         ' ',        '-',        FUNCTION_SW,  KEY_LEFT_ARROW, KEY_DOWN_ARROW, KEY_RIGHT_ARROW}
   },
   //  Layer 2 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   {
@@ -54,7 +54,3 @@ int Layout[NumLayers][RowCount][ColCount] =
     {KEY_LEFT_CTRL,     KEY_LEFT_ALT, FUNCTION_SW2, '-',        ' ',       '-',         ' ',        '-',        FUNCTION_SW,  '0',            KEY_BACKSPACE,  KEY_RETURN}
   }
 };
-
-
-//Array to check if a key is currently pressed - Initiate everything to 0
-short PressedCheck[NumLayers][RowCount][ColCount] = { OFF };
