@@ -52,6 +52,7 @@ final class UpdateProtocolTests: XCTestCase {
             XCTAssertThrowsError(try UpdateProtocol.authenticate(pin))
         }
         XCTAssertEqual(UpdateProtocol.begin(size: 0x12345678), Data([2, 0x78, 0x56, 0x34, 0x12]))
+        XCTAssertEqual(UpdateProtocol.enableStreaming, Data([6]))
         let digest = Data(0..<32)
         XCTAssertEqual(UpdateProtocol.digest(digest, half: 0), Data([3, 0]) + Data(0..<16))
         XCTAssertEqual(UpdateProtocol.digest(digest, half: 1), Data([3, 1]) + Data(16..<32))
@@ -93,6 +94,90 @@ final class UpdateProtocolTests: XCTestCase {
         XCTAssertFalse(digestGate.retireIfReady())
         digestGate.acknowledge()
         XCTAssertTrue(digestGate.retireIfReady())
+    }
+
+    func testStreamingNegotiatedPayloadCapAndSmallMTU() throws {
+        for (maximum, payload) in [(1024, 508), (512, 508), (180, 176), (20, 16), (5, 1)] {
+            var window = try TransferWindow(total: 2000, maximumWriteLength: maximum)
+            XCTAssertEqual(window.payloadCapacity, payload)
+            let range = try XCTUnwrap(window.nextPacket(canSend: true))
+            let packet = UpdateProtocol.packet(offset: UInt32(range.lowerBound), bytes: Data(repeating: 7, count: range.count))
+            XCTAssertEqual(packet.count, payload + 4)
+            XCTAssertLessThanOrEqual(packet.count, min(512, maximum))
+        }
+        for maximum in [-1, 0, 4] {
+            XCTAssertThrowsError(try TransferWindow(total: 100, maximumWriteLength: maximum))
+        }
+        XCTAssertThrowsError(try TransferWindow(total: 0, maximumWriteLength: 512))
+    }
+
+    func testStreamingEightPacketBoundAndBackpressureResume() throws {
+        var window = try TransferWindow(total: 3520, maximumWriteLength: 180)
+        XCTAssertNil(window.nextPacket(canSend: false))
+        XCTAssertEqual(window.sent, 0)
+        for packet in 0..<8 {
+            XCTAssertEqual(window.nextPacket(canSend: true), packet * 176..<(packet + 1) * 176)
+            XCTAssertNil(window.nextPacket(canSend: false))
+            XCTAssertEqual(window.packetsInWindow, packet + 1)
+        }
+        XCTAssertTrue(window.awaitingAcknowledgment)
+        XCTAssertNil(window.nextPacket(canSend: true))
+        XCTAssertEqual(window.acknowledged, 0)
+        XCTAssertTrue(try window.observe(BoardStatus(data: status(written: 1408, total: 3520))))
+        XCTAssertNil(window.nextPacket(canSend: false))
+        XCTAssertEqual(window.nextPacket(canSend: true), 1408..<1584)
+    }
+
+    func testStreamingStaleInvalidAndOutOfRangeAcknowledgments() throws {
+        var window = try TransferWindow(total: 3520, maximumWriteLength: 180)
+        _ = window.nextPacket(canSend: true)
+        // Even an exact sent offset cannot acknowledge a partial (nonfinal) window.
+        XCTAssertThrowsError(try window.observe(BoardStatus(data: status(total: 3520))))
+        for _ in 1..<8 { _ = window.nextPacket(canSend: true) }
+        for bytes in [status(written: 1407, total: 3520), status(written: 1409, total: 3520),
+                      status(written: 3520, total: 3520), status(written: 1408, total: 4000),
+                      status(3, written: 3520, total: 3520), status(1, written: 0, total: 0)] {
+            XCTAssertThrowsError(try window.observe(BoardStatus(data: bytes)))
+            XCTAssertEqual(window.acknowledged, 0)
+        }
+        XCTAssertFalse(try window.observe(BoardStatus(data: status(written: 0, total: 3520))))
+        XCTAssertTrue(try window.observe(BoardStatus(data: status(written: 1408, total: 3520))))
+        _ = window.nextPacket(canSend: true)
+        for offset in [UInt32(0), 176, 1408, 1408] {
+            XCTAssertFalse(try window.observe(BoardStatus(data: status(written: offset, total: 3520))))
+            XCTAssertEqual(window.sent, 1584)
+            XCTAssertEqual(window.packetsInWindow, 1)
+        }
+        XCTAssertThrowsError(try BoardStatus(data: status(written: 3521, total: 3520)))
+    }
+
+    func testStreamingFinalAcknowledgmentBeforeFinishAndCompleteGate() throws {
+        // Short first/final window, exact eight packets, and a shortened ninth.
+        for size in [UInt32(1), 176, 1408, 1409] {
+            var window = try TransferWindow(total: size, maximumWriteLength: 180)
+            while !window.canFinish {
+                while window.nextPacket(canSend: true) != nil {}
+                XCTAssertFalse(window.canFinish)
+                XCTAssertNil(window.nextPacket(canSend: true))
+                let end = window.sent
+                XCTAssertTrue(try window.observe(BoardStatus(data: status(written: end, total: size))))
+            }
+            XCTAssertEqual(window.acknowledged, size)
+            XCTAssertNil(window.nextPacket(canSend: true))
+            XCTAssertFalse(try window.observe(BoardStatus(data: status(written: size, total: size))))
+            for completeFirst in [true, false] {
+                var finish = WriteGate(state: .complete, written: size, total: size)
+                finish.observe(try BoardStatus(data: status(written: size, total: size)))
+                XCTAssertFalse(finish.retireIfReady())
+                if completeFirst { finish.observe(try BoardStatus(data: status(3, written: size, total: size))) }
+                else { finish.acknowledge() }
+                XCTAssertFalse(finish.retireIfReady())
+                if completeFirst { finish.acknowledge() }
+                else { finish.observe(try BoardStatus(data: status(3, written: size, total: size))) }
+                XCTAssertTrue(finish.retireIfReady())
+                XCTAssertFalse(finish.retireIfReady())
+            }
+        }
     }
 
     func testPlausibleImageAndSHA256() throws {

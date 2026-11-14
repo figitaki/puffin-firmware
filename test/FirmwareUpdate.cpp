@@ -6,8 +6,8 @@
 struct Storage : FirmwareStorage {
     std::vector<uint8_t> inactive;
     bool selected = false, active = false, validImage = true, flashOK = true;
-    uint32_t size = 0;
-    uint32_t capacity() const override { return 263; }
+    uint32_t size = 0, limit = 263;
+    uint32_t capacity() const override { return limit; }
     bool begin(uint32_t value) override {
         if (!flashOK) return false;
         size = value; inactive.clear(); active = true; return true;
@@ -149,7 +149,49 @@ void cancelAndTimeoutsAcrossMillisWrap() {
     assert(ongoing.state() == FirmwareUpdate::Complete && storage.selected);
 }
 
+void streamingIsNegotiatedBoundedAndVerified() {
+    const uint8_t stream = 6;
+    for (int payload : {16, 178, 508}) {
+        Storage storage; storage.limit = 10000;
+        FirmwareUpdate update(storage, "482601", 0);
+        update.control(&stream, 1, 0);
+        assert(update.error() == FirmwareUpdate::Protocol && !update.streaming());
+        authorize(update); update.control(&stream, 1, 0); digest(update);
+        assert(update.streaming());
+        const uint32_t total = uint32_t(payload * 9 + 7);
+        begin(update, total); update.progressPublished();
+        for (int i = 0; i < 9; ++i) {
+            packet(update, uint32_t(i * payload), payload, uint32_t(i));
+            assert(update.state() == FirmwareUpdate::Receiving && !storage.selected);
+            assert(update.progressDue() == (i == 7));
+            if (update.progressDue()) update.progressPublished();
+        }
+        packet(update, uint32_t(payload * 9), 7, 10);
+        assert(update.progressDue() && update.written() == total && !storage.selected);
+        for (uint32_t i = 0; i < total; ++i) assert(storage.inactive[i] == uint8_t(i * 11 + 9));
+        finish(update, 11);
+        assert(storage.selected && update.state() == FirmwareUpdate::Complete);
+    }
+    Storage storage; storage.limit = 10000;
+    FirmwareUpdate update(storage, "482601", 0);
+    authorize(update); update.control(&stream, 1, 0); digest(update); begin(update, 1000);
+    packet(update, 0, 509); assert(update.error() == FirmwareUpdate::Protocol && !storage.selected);
+    update.disconnect(1); assert(!update.streaming());
+    authorize(update); digest(update); begin(update, 1000);
+    packet(update, 0, 177); assert(update.error() == FirmwareUpdate::Protocol); // Legacy limit restored.
+    authorize(update); update.control(&stream, 1, 0); digest(update); begin(update, 1000);
+    packet(update, 0, 178); packet(update, 0, 178);
+    assert(update.error() == FirmwareUpdate::Offset && !storage.selected);
+    authorize(update); update.control(&stream, 1, 0); digest(update); begin(update, 1000);
+    packet(update, 0, 508); finish(update);
+    assert(update.error() == FirmwareUpdate::Protocol && !storage.selected);
+    authorize(update); update.control(&stream, 1, 0); digest(update, 0, true); begin(update, 508);
+    packet(update, 0, 508); finish(update);
+    assert(update.error() == FirmwareUpdate::Verification && !storage.selected);
+}
+
 int main() {
+    streamingIsNegotiatedBoundedAndVerified();
     completeImageAndWireStatus(); authenticationAndSessionBoundaries();
     malformedOffsetsBoundsAndVerification(); cancelAndTimeoutsAcrossMillisWrap();
     puts("Firmware update protocol regression tests passed");

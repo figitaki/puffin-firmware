@@ -435,8 +435,14 @@ playheads to track 1/step 1 and restores tempo; it does not reset external CC
 receiver state (including sustain). Boot restores music only when starting MIDI
 mode, always stopped; there is no demo note in a blank project.
 
-**First use:** an unformatted or unreadable data partition shows `STORAGE ERROR`.
-It is never formatted automatically. Only if you intend to erase that partition,
+**First use:** a fully erased data partition, or a mounted filesystem with no
+saved project, boots directly into an empty pattern without an error notice.
+The whole partition must read as erased (0xFF); nonblank mount failures, read
+errors, corrupt saves and unsupported schemas still report their real errors.
+A healthy saved project also restores silently. Application-only OTA updates do
+not erase project storage. If storage is unformatted, explicit Save shows
+`STORAGE NOT SETUP / FN+C STORAGE SETUP`; no data is formatted automatically.
+Only if you intend to initialize/erase that partition,
 stop playback, press Fn+C, read `ERASE STORAGE? / ALL PROJECTS LOST`, then Fn+V.
 After `STORAGE READY`, press Fn+Z to save your current music. Fn+B cancels. If a
 previous firmware used the partition, back up its contents first. This operation
@@ -508,6 +514,16 @@ there. Avoid external software/hardware MIDI feedback loops.
 g++ -std=c++11 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -Isrc test/Clock.cpp -o /tmp/puffin-clock-tests
 /tmp/puffin-clock-tests
 ```
+
+## Pattern synchronization (experimental)
+
+BLE/TRS MIDI SysEx now supports a revision-checked first-note/velocity pattern
+projection: four tracks, all 64 stored slots, 16-step pages and arbitrary set-end
+lengths. Staged writes commit only while stopped and preserve existing chords,
+chance, ratchets, gates and CC locks. They edit RAM, not flash. This is a
+single-companion adapter, not full-pattern backup or network peer sync.
+See [the wire contract and interoperability harness](docs/pattern-sysex.md)
+for capabilities, retry limits, projection semantics and hardware-test gaps.
 
 ## Display scheduling
 

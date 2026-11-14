@@ -7,7 +7,7 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     enum Phase { case idle, importing, scanning, connecting, preparing, pin, transferring, complete, failed }
     enum FailureStage { case service, connection, transfer }
     struct Device: Identifiable { let id: UUID; let name: String }
-    private enum Operation { case authenticate, digest0, digest1, begin, packet(UInt32), finish }
+    private enum Operation { case authenticate, negotiateStreaming, digest0, digest1, begin, packet(UInt32), finish }
     private struct Pending {
         let operation: Operation
         let characteristic: CBUUID
@@ -30,6 +30,7 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     private var data: CBCharacteristic?
     private var status: CBCharacteristic?
     private var pending: Pending?
+    private var stream: TransferWindow?
     private var waitingForInitialStatus = false
     private var deadline: Task<Void, Never>?
     private var importID = UUID()
@@ -190,7 +191,7 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
 
     private func releaseConnection() {
         deadline?.cancel(); deadline = nil; central?.stopScan()
-        pending = nil; waitingForInitialStatus = false
+        pending = nil; stream = nil; waitingForInitialStatus = false
         control = nil; data = nil; status = nil
         if let peripheral {
             peripheral.delegate = nil
@@ -218,6 +219,17 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         guard let image, let control, let data, let peripheral else { fail("Update session was lost."); return }
         switch current.operation {
         case .authenticate:
+            if data.properties.contains(.writeWithoutResponse) {
+                send(UpdateProtocol.enableStreaming, to: control, operation: .negotiateStreaming, gate: WriteGate())
+            } else {
+                message = "Sending SHA-256 digest…"
+                send(UpdateProtocol.digest(image.digest, half: 0), to: control, operation: .digest0, gate: WriteGate())
+            }
+        case .negotiateStreaming:
+            do {
+                stream = try TransferWindow(total: total,
+                    maximumWriteLength: peripheral.maximumWriteValueLength(for: .withoutResponse))
+            } catch { fail(error.localizedDescription); return }
             message = "Sending SHA-256 digest…"
             send(UpdateProtocol.digest(image.digest, half: 0), to: control, operation: .digest0, gate: WriteGate())
         case .digest0:
@@ -227,6 +239,12 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
             send(UpdateProtocol.begin(size: total), to: control, operation: .begin,
                  gate: WriteGate(state: .receiving, total: total))
         case .begin, .packet:
+            if stream != nil {
+                message = "Transferring to Puffin. Keep this app open and stay nearby."
+                armTimeout("No streaming readiness or matching progress from Puffin. Transfer stopped; restart from zero.")
+                pumpStream()
+                return
+            }
             if case .packet(let committed) = current.operation { written = committed }
             if written == total {
                 message = "Puffin is verifying the image…"
@@ -246,6 +264,23 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
             // Complete is the only success signal. Do not send Abort after it.
             releaseConnection()
         }
+    }
+
+    private func pumpStream() {
+        guard phase == .transferring, pending == nil, let peripheral,
+              peripheral.state == .connected, let data, let image, var window = stream else { return }
+        // CoreBluetooth calls delegates on the main queue, so the cursor is saved
+        // before any board notification or readiness callback can run.
+        while let range = window.nextPacket(canSend: peripheral.canSendWriteWithoutResponse) {
+            peripheral.writeValue(UpdateProtocol.packet(offset: UInt32(range.lowerBound),
+                bytes: image.bytes.subdata(in: range)), for: data, type: .withoutResponse)
+        }
+        stream = window
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        guard peripheral === self.peripheral else { return }
+        pumpStream()
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
@@ -327,7 +362,24 @@ final class Updater: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
                 return
             }
             // Ignore notifications before subscription/read setup completes.
-            guard phase == .transferring, var current = pending else { return }
+            guard phase == .transferring else { return }
+            if pending == nil, var window = stream {
+                let advanced = try window.observe(board)
+                stream = window
+                guard advanced else { return }
+                written = window.acknowledged
+                if window.canFinish {
+                    guard let control else { throw UpdateFailure("Update session was lost.") }
+                    message = "Puffin is verifying the image…"
+                    send(Data([4]), to: control, operation: .finish,
+                         gate: WriteGate(state: .complete, written: total, total: total))
+                } else {
+                    armTimeout("No streaming readiness or matching progress from Puffin. Transfer stopped; restart from zero.")
+                    pumpStream()
+                }
+                return
+            }
+            guard var current = pending else { return }
             if board.state == .complete {
                 guard case .finish = current.operation, board.total == total else {
                     fail("Unexpected completion status; installation is not confirmed."); return

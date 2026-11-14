@@ -87,9 +87,11 @@ public:
         for (int i = 0; i < Capacity; ++i) state.steps[i] = notes[i];
     }
 
-    bool replaceState(const State &state) {
+    bool replaceState(const State &state, bool retainPosition = false) {
         if (!validState(state)) return false;
+        const int next = retainPosition && state.length == length ? s : 0;
         reset();
+        s = next;
         length = state.length;
         muted = state.muted;
         for (int i = 0; i < Capacity; ++i) notes[i] = state.steps[i];

@@ -1,0 +1,275 @@
+#include "PatternSync.h"
+#include <cassert>
+#include <cstdio>
+#include <iostream>
+#include <sstream>
+#include <vector>
+
+using Bytes = std::vector<uint8_t>;
+static const uint8_t nonce[8] = {1,2,3,4,5,6,7,8};
+static ProjectSnapshot state;
+static PatternSync sync;
+static PatternSync::Reply reply;
+static PatternSync::Status status;
+static unsigned requestID;
+static uint32_t now;
+
+static Bytes frame(uint8_t command, const Bytes &payload = {}, unsigned id = 0) {
+    Bytes out = {0xf0,0x7d,0x50,0x46,1,0,command,uint8_t(id & 127),uint8_t(id >> 7)};
+    out.insert(out.end(), payload.begin(), payload.end());
+    unsigned sum = 0;
+    for (size_t i = 1; i < out.size(); ++i) sum += out[i];
+    out.push_back(uint8_t(-sum) & 127); out.push_back(0xf7);
+    return out;
+}
+static void send(const Bytes &bytes, uint8_t source = 0) {
+    sync.receive(bytes.data(), bytes.size(), source, now, state, status, reply);
+    if (!reply.size) return;
+    unsigned sum = 0;
+    for (size_t i = 1; i + 1 < reply.size; ++i) { assert(reply.bytes[i] < 128); sum += reply.bytes[i]; }
+    assert((sum & 127) == 0 && reply.bytes[reply.size - 1] == 0xf7);
+}
+static void call(uint8_t command, const Bytes &payload = {}, uint8_t source = 0) {
+    send(frame(command, payload, ++requestID), source);
+}
+static void okay(uint8_t command) { assert(reply.size >= 11 && reply.bytes[6] == command + 0x40); }
+static void error(PatternSync::Error code) { assert(reply.bytes[6] == 0x7f && reply.bytes[10] == code); }
+static Bytes begin(uint8_t track = 0, uint8_t length = 16, uint8_t muted = 0) {
+    Bytes p(nonce, nonce + 8);
+    uint32_t revision = sync.currentRevision();
+    for (int i = 0; i < 5; ++i) { p.push_back(revision & 127); revision >>= 7; }
+    p.push_back(track); p.push_back(length); p.push_back(muted);
+    return p;
+}
+static Bytes token() { return {reply.bytes[9],reply.bytes[10]}; }
+static Bytes chunk(const Bytes &t, uint8_t offset, const Bytes &pairs) {
+    Bytes p = t; p.push_back(offset); p.push_back(uint8_t(pairs.size()/2));
+    p.insert(p.end(), pairs.begin(), pairs.end()); return p;
+}
+static void reset() {
+    state = ProjectSnapshot{}; state.projectID[0] = 1;
+    sync.begin(nonce, state); requestID = 0; now = 0; status = PatternSync::Status{};
+}
+static void replyEchoes() {
+    // Valid response frames, including oversized READ_TRACK and ERROR, are not requests.
+    for (uint8_t command : {0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x7f}) {
+        reset();
+        send(frame(command, Bytes(command == 0x42 ? 136 : 2, 0), 77));
+        assert(reply.size == 0 && reply.appliedTrack == -1);
+        // Ignored responses do not consume request IDs or cache capacity.
+        for (int i = 0; i < 32; ++i) { call(1); okay(1); }
+    }
+    reset(); call(1);
+    Bytes echo(reply.bytes, reply.bytes + reply.size);
+    send(echo); assert(reply.size == 0);
+    call(99); error(PatternSync::Unsupported);
+    echo.assign(reply.bytes, reply.bytes + reply.size);
+    send(echo); assert(reply.size == 0);
+}
+
+static void retryActivity() {
+    for (int kind = 0; kind < 6; ++kind) {
+        reset();
+        const Bytes oldBegin = frame(3, begin(), ++requestID);
+        send(oldBegin); okay(3); const Bytes oldToken = token();
+        const Bytes oldChunk = frame(4, chunk(oldToken,0,{60,90}), ++requestID);
+        send(oldChunk); okay(4);
+        const Bytes busyBegin = frame(3, begin(), ++requestID);
+        send(busyBegin); error(PatternSync::Busy);
+        call(6,oldToken); okay(6);
+        now = 1000;
+        const Bytes liveBegin = frame(3, begin(), ++requestID);
+        send(liveBegin); okay(3); const Bytes liveToken = token();
+        const Bytes invalidChunk = frame(4,chunk(liveToken,63,{60,90,61,91}),++requestID);
+        send(invalidChunk); error(PatternSync::Range);
+        const Bytes liveChunk = frame(4,chunk(liveToken,0,{62,92}),++requestID);
+        send(liveChunk); okay(4);
+        now = 10000;
+        const Bytes retries[] = {oldBegin,oldChunk,busyBegin,invalidChunk,liveBegin,liveChunk};
+        send(retries[kind]);
+        now = 11000;
+        call(5,liveToken);
+        if (kind < 4) {
+            error(PatternSync::Expired);
+            call(3,begin(),1); okay(3); // Expiry frees the stage for another ingress.
+        } else okay(5); // Successful retries of this exact stage renew its idle deadline.
+    }
+}
+
+static void silentPitchRoundTrip() {
+    reset();
+    // Count-zero backing pitches are not musical content or part of the projection.
+    state.tracks[0].steps[63].notes[0] = 70;
+    state.tracks[0].steps[63].velocity = 95;
+    sync.observe(state);
+    call(2,{0}); okay(2); assert(reply.bytes[143] == 0 && reply.bytes[144] == 0);
+    call(3,begin()); Bytes unchanged = token();
+    call(4,chunk(unchanged,63,{0,0})); okay(4); call(5,unchanged); okay(5);
+    assert(state.tracks[0].steps[63].count == 0 && state.tracks[0].steps[63].velocity == 95);
+    reset();
+    const ProjectSnapshot blank = state;
+    call(3,begin()); Bytes t = token();
+    call(4,chunk(t,63,{70,0})); okay(4); call(5,t); okay(5);
+    assert(!ProjectCodec::sameContent(blank,state));
+    Bytes wire(ProjectCodec::Size);
+    assert(ProjectCodec::encode(state,1,wire.data(),wire.size()));
+    ProjectSnapshot loaded; uint64_t generation = 0;
+    assert(ProjectCodec::decode(wire.data(),wire.size(),loaded,generation) == ProjectCodec::Valid);
+    state = loaded;
+    call(2,{0}); okay(2); assert(reply.bytes[143] == 70 && reply.bytes[144] == 0);
+    call(3,begin()); t = token();
+    const uint32_t before = sync.currentRevision();
+    state.tracks[0].steps[63] = Sequencer::Step{}; // Same operation as onboard Clear.
+    call(5,t); error(PatternSync::Conflict);
+    assert(sync.currentRevision() == before + 1);
+    call(2,{0}); okay(2); assert(reply.bytes[143] == 0 && reply.bytes[144] == 0);
+}
+
+int main(int argc, char **) {
+    reset();
+    // Standalone interoperability harness: one complete hex request per stdin line.
+    // Fixed nonce 01..08, default project, time advances 1ms per input, source BLE.
+    if (argc > 1) {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            std::istringstream input(line); Bytes bytes; unsigned value;
+            while (input >> std::hex >> value) { if (value > 255) return 2; bytes.push_back(uint8_t(value)); }
+            send(bytes); ++now;
+            for (size_t i = 0; i < reply.size; ++i) std::printf("%s%02x", i ? " " : "", reply.bytes[i]);
+            std::puts("");
+        }
+        return 0;
+    }
+    silentPitchRoundTrip();
+    replyEchoes();
+    retryActivity();
+    reset();
+    // Independently fixed envelope/checksum fixture, not generated by frame().
+    send({0xf0,0x7d,0x50,0x46,1,0,1,1,0,0x6a,0xf7});
+    okay(1); assert(reply.size == 29 && reply.bytes[9] == 1 && reply.bytes[13] == 11);
+    assert(reply.bytes[14] == 1 && reply.bytes[21] == 8);
+    const Bytes hello = {0xf0,0x7d,0x50,0x46,1,0,0x41,1,0,1,4,4,16,11,
+                         1,2,3,4,5,6,7,8,0,0,0,0,0,0x62,0xf7};
+    assert(reply.size == hello.size() && !memcmp(reply.bytes, hello.data(), hello.size()));
+    reset();
+    call(2,{3}); okay(2); assert(reply.size == 147 && reply.bytes[15] == 16 && reply.bytes[16] == 0);
+    for (int i = 0; i < 128; ++i) assert(reply.bytes[17+i] == 0);
+    call(7); okay(7); assert(reply.size == 24 && reply.bytes[14] == 0 && reply.bytes[15] == 0);
+    for (int i = 16; i < 20; ++i) assert(reply.bytes[i] == 127);
+    assert(reply.bytes[20] == 120 && reply.bytes[21] == 0);
+
+    // Rich hidden step and independent selection survive first-note projection updates.
+    reset();
+    auto &rich = state.tracks[2].steps[63];
+    rich.count = 3; rich.notes[0] = 61; rich.notes[1] = 68; rich.notes[2] = 72;
+    rich.velocity = 93; rich.chance = 37; rich.ratchet = 6; rich.gate = 2;
+    rich.lockCount = 2; rich.locks[0].control = 74; rich.locks[0].value = 91;
+    rich.locks[1].control = 1; rich.locks[1].value = 15;
+    state.swing = 2; sync.observe(state);
+    call(3,begin(2,49,1)); okay(3); Bytes t = token();
+    call(4,chunk(t,63,{62,101})); okay(4);
+    assert(rich.notes[0] == 61); // Staging is not live.
+    call(5,t); okay(5); assert(reply.appliedTrack == 2 && rich.notes[0] == 62 && rich.velocity == 101);
+    assert(state.tracks[2].length == 49 && state.tracks[2].muted && state.swing == 2);
+    assert(rich.notes[1] == 68 && rich.notes[2] == 72 && rich.count == 3);
+    assert(rich.chance == 37 && rich.ratchet == 6 && rich.gate == 2 && rich.lockCount == 2);
+    assert(rich.locks[0].value == 91 && rich.locks[1].value == 15);
+    const uint32_t committed = sync.currentRevision();
+    Bytes commit = frame(5,t,requestID);
+    send(commit); okay(5); assert(reply.appliedTrack == -1 && sync.currentRevision() == committed);
+    send(frame(6,t,requestID)); error(PatternSync::Malformed); // Same ID, different request.
+
+    // Unchanged silent preset must not turn into a note or lose velocity.
+    reset(); state.tracks[0].steps[3].velocity = 95; sync.observe(state);
+    call(3,begin()); t = token(); call(4,chunk(t,3,{0,0})); okay(4); call(5,t); okay(5);
+    assert(state.tracks[0].steps[3].count == 0 && state.tracks[0].steps[3].velocity == 95);
+    now += 30001;
+    call(3,begin()); t = token(); call(4,chunk(t,3,{70,0})); call(5,t); okay(5);
+    assert(state.tracks[0].steps[3].count == 1 && state.tracks[0].steps[3].notes[0] == 70 &&
+           state.tracks[0].steps[3].velocity == 0);
+    now += 30001;
+    call(3,begin()); t = token(); call(4,chunk(t,3,{70,84})); call(5,t); okay(5);
+    assert(state.tracks[0].steps[3].count == 1 && state.tracks[0].steps[3].velocity == 84);
+
+    reset(); auto &chord = state.tracks[0].steps[0]; chord.count = 2;
+    chord.notes[0] = 60; chord.notes[1] = 67; chord.velocity = 99; sync.observe(state);
+    call(3,begin()); t = token();
+    call(4,chunk(t,0,{67,100,73,92})); error(PatternSync::Range);
+    call(5,t); okay(5); assert(chord.notes[0] == 60 && state.tracks[0].steps[1].count == 0);
+    now += 30001;
+    call(3,begin()); t = token(); call(4,chunk(t,0,{60,0})); call(5,t);
+    assert(chord.count == 2 && chord.notes[1] == 67 && chord.velocity == 0);
+
+    // CAS rejects local edits, including hidden expression, tempo, swing, and identity.
+    for (int kind = 0; kind < 4; ++kind) {
+        reset(); call(3,begin()); t = token(); call(4,chunk(t,0,{65,98}));
+        if (kind == 0) state.tracks[3].steps[63].gate = 1;
+        if (kind == 1) state.bpm = 137;
+        if (kind == 2) state.swing = 1;
+        if (kind == 3) state.projectID[1] = 2;
+        call(5,t); error(PatternSync::Conflict); assert(state.tracks[0].steps[0].count == 0);
+    }
+    reset(); auto stale = begin(); state.bpm = 125; sync.observe(state);
+    call(3,stale); error(PatternSync::Conflict);
+    auto badBoot = begin(); badBoot[0] = 99; call(3,badBoot); error(PatternSync::BootChanged);
+    auto highRevision = begin(); highRevision[12] = 16; call(3,highRevision); error(PatternSync::Range);
+
+    // Playback never accepts commit. A new request ID is required after cached Busy.
+    reset(); call(3,begin()); t = token(); status.running = true;
+    call(5,t); error(PatternSync::Busy); assert(state.tracks[0].length == 16);
+    status.running = false; call(5,t); okay(5);
+    reset(); call(3,begin()); t = token();
+    call(4,chunk(t,0,{60,90}),1); error(PatternSync::Busy);
+    now = 9999; call(4,chunk(t,0,{60,90})); okay(4);
+    now = 19999; call(5,t); error(PatternSync::Expired);
+    reset(); now = UINT32_MAX - 5; call(3,begin()); t = token();
+    now = 10000; call(5,t); error(PatternSync::Expired);
+
+    // Cache pressure cannot evict uncertain commits. Expiry reclaims slots.
+    reset(); for (int i = 0; i < 32; ++i) { call(7); okay(7); }
+    call(7); error(PatternSync::Busy); now = 30000; call(7); okay(7);
+    reset(); call(3,begin()); t = token(); call(6,t); okay(6); call(5,t); error(PatternSync::Expired);
+
+    // Malformed and unsupported traffic cannot mutate the project.
+    reset();
+    for (int size = 0; size < 11; ++size) {
+        Bytes b = frame(1); b.resize(size); send(b); assert(reply.size == 0);
+    }
+    Bytes b = frame(1); b[9] ^= 1; send(b); error(PatternSync::Malformed);
+    b = frame(1); b[5] = 4; send(b); assert(reply.size == 0);
+    b = frame(1); b[5] = 127; b[9] = uint8_t(b[9] - 127) & 127; send(b); okay(1);
+    call(99); error(PatternSync::Unsupported);
+    call(2,{4}); error(PatternSync::Range);
+    call(3,begin(0,0)); error(PatternSync::Range);
+    call(3,begin(0,65)); error(PatternSync::Range);
+    call(3,begin(0,16,2)); error(PatternSync::Range);
+    call(3,begin()); t = token(); call(4,chunk(t,63,{1,2,3,4})); error(PatternSync::Range);
+    call(4,{t[0],t[1],0,0}); error(PatternSync::Range);
+    call(4,{t[0],t[1],0,1}); error(PatternSync::Malformed);
+    assert(sync.currentRevision() == 0);
+    // Every missing byte and illegal interior high bit rejects without a write.
+    const Bytes complete = frame(3, begin(), 100);
+    for (size_t n = 11; n < complete.size(); ++n) {
+        Bytes truncated(complete.begin(), complete.begin() + n);
+        send(truncated); error(PatternSync::Malformed);
+    }
+    for (size_t i = 4; i + 1 < complete.size(); ++i) {
+        if (i == 5) continue; // Other addresses are deliberately ignored.
+        Bytes invalid = complete; invalid[i] |= 128;
+        send(invalid); error(PatternSync::Malformed);
+    }
+    b = frame(1, {}, 101); b[4] = 2; b[9] = uint8_t(b[9] - 1) & 127;
+    send(b); error(PatternSync::Unsupported);
+    // A maximum-sized chunk edits exactly sixteen slots, including the end.
+    reset(); call(3,begin(3,64)); t = token();
+    Bytes pairs;
+    for (int i = 0; i < 16; ++i) { pairs.push_back(uint8_t(40+i)); pairs.push_back(uint8_t(127-i)); }
+    b = frame(4, chunk(t,48,pairs), ++requestID); assert(b.size() == 47);
+    send(b); okay(4); call(5,t); okay(5);
+    for (int i = 0; i < 16; ++i) {
+        assert(state.tracks[3].steps[48+i].notes[0] == 40+i);
+        assert(state.tracks[3].steps[48+i].velocity == 127-i);
+    }
+    assert(state.tracks[3].steps[47].count == 0);
+    std::puts("Pattern SysEx protocol tests passed");
+}
