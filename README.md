@@ -243,6 +243,7 @@ These are physical key positions, independent of the typing preset or remaps.
 | Note keys | Audition and write using the selected step's velocity (95 if unset) |
 | Fn+N / Fn+M | Velocity −1 / +1, clamped to 1–127 |
 | Fn+comma / Fn+period | Gate −1 / +1 MIDI clock pulses, clamped to 1–6 |
+| Fn+slash | Cycle global sixteenth swing: straight / 58⅓% / 66⅔% (internal clock only) |
 | Return | Clear the selected step, including its chord, chance, ratchets, and locks |
 
 Each track remembers its own edit position. The cursor does not advance when
@@ -282,7 +283,7 @@ Running edits affect the next visit, not the sounding chord or pending ratchets.
 Velocity survives Save/Load, including hidden pages.
 
 Gate editing selects `G2/6`: two of the six 24-PPQN MIDI clock pulses in a
-sixteenth-note step. Gates default to 6 (the original full-step sustain) and
+sixteenth-note step. Gates default to 6 (full sustain on a straight step) and
 range from 1 to 6. Fn+comma shortens, Fn+period lengthens. Empty steps also show
 `REST`; adjusting their gate does not add notes. Replacement/chord entry retain
 the gate; Return clears it back to 6. All chord notes share a gate, and running
@@ -305,10 +306,40 @@ there is no tempo prediction between pulses. A lost external master releases
 remaining sequence notes after the existing 500-ms timeout. Dense serial MIDI,
 BLE scheduling and the main loop add latency; native tests do not measure it.
 
-New saves use project schema v2 with gate values for all 256 steps. Existing
-v1 projects load read-only with gate 6. The first explicit Save writes v2 to
-the other generation slot, retaining the v1 recovery copy; older firmware
-cannot load v2 and will refuse ordinary overwrites. Back up before downgrading.
+### Sixteenth swing
+
+In the editor, Fn+slash cycles straight (`SW50`), 58⅓% (`SW58`) and 66⅔%
+(`SW67`). Swing is global across the four tracks. It alternates long/short
+sixteenth-note spans of 12/12, 14/10 or 16/8 internal ticks at 48 PPQN. Each pair
+always totals 24 ticks (one eighth note), so tempo and eighth-note boundaries
+stay unchanged. Global pair phase does not reset when an odd-length track wraps.
+Changes during playback latch at the next pair boundary; Start resets the pair,
+while Stop/Continue retain its phase. The OLED displays the selected setting.
+
+Outgoing MIDI TimingClock remains straight at 24 PPQN, including on the swung
+step boundary. Only the onboard sequence's notes/locks are swung, not external
+instruments' own sequencers or the MIDI-thru stream. Gates retain their absolute
+24-PPQN pulse lengths (two internal ticks per pulse) and truncate at the next
+hit/step; gate 6 can therefore end before a long swung step finishes. Ratchet
+hits divide the current swung span, rounding down to the previous 48-PPQN tick.
+All 1/2/3/6 hits are retained, even in the shortest step; unequal integer spacing
+is bounded to one internal tick. CC locks still send once at the first hit.
+Live audition is not delayed by swing.
+
+When following BLE/TRS clock, the saved swing setting is bypassed and displayed
+as `SW67 OFF` (or the selected amount). External sequencing stays on actual
+24-PPQN pulses, without guessing between packets; switch back to internal clock
+to activate swing. This avoids making interpolated external timing promises.
+Internal 48-PPQN ticks are about 62.5 ms at 20 BPM, 9.12 ms at 137 BPM and
+4.17 ms at 300 BPM. These are grid intervals, not measured output precision.
+Two pending internal ticks cause a safe transport stop rather than a catch-up
+burst, so the main-loop stall budget is tighter than the old 24-PPQN scheduler.
+
+New saves use schema v3 with global swing plus all 256 gates. V1/v2 projects
+load read-only with straight swing (v1 also supplies gate 6). The first explicit
+Save writes v3 to the other generation slot, retaining the legacy recovery copy;
+older firmware cannot load v3 and refuses ordinary overwrites. Back up before
+downgrading.
 Host tests and software OLED renders do not replace checking the physical
 controls, display, and received MIDI on a board.
 
@@ -331,7 +362,7 @@ editor (except MIDI Ctrl, which is also a chord-entry toggle inside the editor).
 | Fn+H / Fn+J | Select MIDI CC number −1 / +1 (0–119; starts at 74) |
 | Fn+K / Fn+L | Set/adjust that CC lock value −1 / +1 (0–127) |
 | Fn+semicolon | Remove the selected CC lock from this step |
-| Fn+Backspace | Cycle note, trigger, CC, velocity, and gate detail views |
+| Fn+Backspace | Cycle note, trigger, CC, velocity, gate, and swing detail views |
 
 Chord append mode shows `+` before the transport indicator. Tap up to four
 different note keys to build a chord on the selected step, without advancing
@@ -346,9 +377,10 @@ not per-track musical settings.
 Chance defaults to 100% and is rolled once per step visit, for the entire chord
 and its locks. 0% skips all of them, without keeping the preceding chord held.
 The hardware uses ESP32 randomness. Ratchets default to 1; 2, 3 and 6 mean that
-many evenly spaced chord hits within a sixteenth-note step. They use the actual
-24-PPQN pulses from internal, BLE, or TRS clock, not a guessed external tempo.
-4× ratchets need finer timing and are not supported yet. Locks send once before
+many chord hits within a sixteenth-note step. Internal hits use the 48-PPQN
+swing grid described above; external hits use actual 24-PPQN BLE/TRS pulses,
+not a guessed external tempo. 4× ratchets remain unsupported on external clock
+and are not exposed by the editor. Locks send once before
 the first hit, not on each ratchet. Overlapping live notes retain ownership, so
 their pitches do not retrigger or release when a ratchet fires.
 Dense chords/ratchets across four tracks can exceed the 31.25-kbaud TRS MIDI
@@ -376,7 +408,7 @@ step to sound a new chord. Explicit project saves retain these step settings.
 
 One project holds all four tracks, their lengths/mutes, all 64 steps per track
 (including hidden pages), chords, shared velocity/gate, chance, ratchets, CC locks,
-and internal tempo. Clock source/output route, held notes, transport position,
+internal tempo, and global swing. Clock source/output route, held notes, transport position,
 editor tools, typing maps, and Bluetooth identities are not project content.
 A `*` in either MIDI view marks unsaved musical changes; returning to the saved
 content clears it. No autosave or per-note flash writes occur.
@@ -418,7 +450,7 @@ Save; it is never silently overwritten. Initialization is a separate destructive
 action, not a recovery shortcut. Failed writes show `SAVE FAILED`, retain the
 unsaved marker, and leave the previous committed snapshot untouched.
 
-The v2 format, v1 migration, storage policy, limitations, and physical power-loss
+The v3 format, v1/v2 migration, storage policy, limitations, and physical power-loss
 acceptance checklist are in [Project persistence](docs/project-persistence.md).
 Software checks do **not** establish real-board flash durability or uninterrupted
 MIDI delivery. Physical save/reboot/power-cut and updater-preservation tests remain
@@ -444,17 +476,18 @@ pulse phase; Continue can resume the retained next step, or Start resets to zero
 Project saves retain internal tempo and patterns, but not clock source or output route.
 
 Internal clock defaults to 120 BPM, supports 20–300 BPM, and emits 24 pulses per
-quarter note. Each sixteenth note advances every six clocks. Start/Continue send
-their MIDI transport message before the first internal clock; external transport
-waits for the selected input's next clock. Start resets step/pulse position;
-Continue preserves pulse phase and the next-step index, with the next clock due
-immediately in internal mode. Stop releases the sequence without cutting off a
+quarter note. Straight steps advance every six wire clocks; internal swing
+changes sequence step spans without changing wire clock spacing. Start/Continue
+send transport before resuming internal sequence ticks; external transport waits
+for the selected input's next clock. Start resets step/pair position. Continue
+preserves pair/half-clock phase and the next-step index, with an immediate
+internal sequence tick; a wire clock is emitted only on an even internal tick. Stop releases the sequence without cutting off a
 shared live-note owner.
 
 The clock accumulates integer microsecond fractions, preserving long-run tempo
 and tempo-change phase without millisecond rounding or integer division by zero.
 Unsigned timestamp differences handle normal `micros()` wrap. Two pending
-internal clocks are treated as a stall: stop/release instead of replaying a
+48-PPQN internal ticks are treated as a stall: stop/release instead of replaying a
 backlog. A playing external sequence also stops after 500 ms without a selected
 clock, including a late arrival after that gap. Restart/Continue is then required.
 These are fail-safe policies, not guarantees that BLE or the main loop can meet

@@ -90,7 +90,9 @@ public:
 
     void clear(int index = -1) { tracks[selected].clear(index); }
     void setMuted(bool value) { tracks[selected].setMuted(value); }
-    void step() { for (auto &track : tracks) track.step(); }
+    void step(uint8_t duration = 6, uint8_t scale = 1) {
+        for (auto &track : tracks) track.step(duration, scale);
+    }
     void pulse() { for (auto &track : tracks) track.pulse(); }
     void stop() { for (auto &track : tracks) track.stop(); }
     void reset() { for (auto &track : tracks) track.reset(); }

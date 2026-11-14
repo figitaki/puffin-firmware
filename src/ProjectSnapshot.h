@@ -14,6 +14,7 @@ struct ProjectSnapshot {
     uint8_t projectID[16] = {};
     uint32_t patternID = 1;
     uint16_t bpm = 120;
+    uint8_t swing = 0;
     Track tracks[4];
 
     ProjectSnapshot() {
@@ -23,14 +24,15 @@ struct ProjectSnapshot {
     bool valid() const {
         bool nonzero = false;
         for (uint8_t byte : projectID) nonzero = nonzero || byte != 0;
-        if (!nonzero || patternID != 1 || bpm < 20 || bpm > 300) return false;
+        if (!nonzero || patternID != 1 || bpm < 20 || bpm > 300 || swing > 2) return false;
         for (int i = 0; i < 4; ++i)
             if (tracks[i].id != uint32_t(i + 1) || !Sequencer::validState(tracks[i])) return false;
         return true;
     }
 
-    void capture(const MultiTrackSequencer &seq, uint16_t tempo) {
+    void capture(const MultiTrackSequencer &seq, uint16_t tempo, uint8_t swing = 0) {
         bpm = tempo;
+        this->swing = swing;
         for (int i = 0; i < 4; ++i) {
             seq.exportTrack(i, tracks[i]);
             tracks[i].id = uint32_t(i + 1);
@@ -45,7 +47,8 @@ struct ProjectSnapshot {
 
 class ProjectCodec {
 public:
-    static const size_t HeaderSize = 32, PayloadSize = 4654, Size = 4686;
+    static const size_t HeaderSize = 32, PayloadSize = 4655, Size = 4687;
+    static const size_t V2PayloadSize = 4654, V2Size = 4686;
     static const size_t V1PayloadSize = 4398, V1Size = 4430;
     enum Result { Valid, Invalid, Unsupported };
 
@@ -66,7 +69,7 @@ public:
         if (!data || size != Size || !generation || !snapshot.valid()) return false;
         memset(data, 0, Size);
         memcpy(data, "PFNP", 4);
-        put(data + 4, 2, 2);
+        put(data + 4, 3, 2);
         put(data + 6, HeaderSize, 2);
         put(data + 8, PayloadSize, 4);
         put(data + 12, generation, 8);
@@ -92,6 +95,7 @@ public:
                 *p++ = step.gate;
             }
         }
+        *p++ = snapshot.swing;
         put(data + 24, crc32(data, Size, true), 4);
         return true;
     }
@@ -102,8 +106,8 @@ public:
         // Protect unknown versions even if the rest of their record is malformed.
         if (size < 6) return Invalid;
         const uint64_t version = get(data + 4, 2);
-        if (version != 1 && version != 2) return Unsupported;
-        const size_t recordSize = version == 1 ? V1Size : Size;
+        if (version != 1 && version != 2 && version != 3) return Unsupported;
+        const size_t recordSize = version == 1 ? V1Size : version == 2 ? V2Size : Size;
         const size_t stepSize = version == 1 ? 17 : 18;
         if (size != recordSize || get(data + 6, 2) != HeaderSize ||
             get(data + 8, 4) != recordSize - HeaderSize || !get(data + 12, 8) ||
@@ -124,10 +128,11 @@ public:
             for (int s = 0; s < 64; ++s, p += stepSize) {
                 if (p[4] > 4 || p[16] > 4) return Invalid;
                 Sequencer::Step step;
-                readStep(p, step, version == 2);
+                readStep(p, step, version >= 2);
                 if (!Sequencer::validStep(step)) return Invalid;
             }
         }
+        if (version == 3 && *p > 2) return Invalid;
         p = data + HeaderSize;
         memcpy(out.projectID, p, 16); p += 16;
         out.patternID = uint32_t(get(p, 4)); p += 4;
@@ -136,14 +141,16 @@ public:
             track.id = uint32_t(get(p, 4)); p += 4;
             track.length = *p++;
             track.muted = *p++ != 0;
-            for (auto &step : track.steps) { readStep(p, step, version == 2); p += stepSize; }
+            for (auto &step : track.steps) { readStep(p, step, version >= 2); p += stepSize; }
         }
+        out.swing = version == 3 ? *p : 0;
         generation = get(data + 12, 8);
         return Valid;
     }
 
     static bool sameContent(const ProjectSnapshot &a, const ProjectSnapshot &b) {
-        if (memcmp(a.projectID, b.projectID, 16) || a.patternID != b.patternID || a.bpm != b.bpm)
+        if (memcmp(a.projectID, b.projectID, 16) || a.patternID != b.patternID ||
+            a.bpm != b.bpm || a.swing != b.swing)
             return false;
         for (int t = 0; t < 4; ++t) {
             const auto &x = a.tracks[t];
