@@ -51,6 +51,8 @@ public:
         if (!addressed(data, size) || size < 11) return;
         // Fixed address zero; broadcast is discovery-only.
         if (data[5] != 0 && !(data[5] == 127 && data[6] == 1)) return;
+        // Defined replies are never requests, even when echoed by a MIDI route.
+        if ((data[6] >= 0x41 && data[6] <= 0x47) || data[6] == 0x7f) return;
         const uint8_t command = data[6] & 127;
         header(reply, command + 0x40, data);
         uint8_t sum = 0;
@@ -73,8 +75,10 @@ public:
                 } else {
                     memcpy(reply.bytes, entry.response, entry.responseSize);
                     reply.size = entry.responseSize;
-                    // A retried chunk is activity, but an old BEGIN cannot resurrect a stage.
-                    if (staged && owner == source && (command == 3 || command == 4)) touched = now;
+                    // Only a successful retry belonging to this live stage is activity.
+                    if (staged && owner == source && (command == 3 || command == 4) &&
+                        reply.bytes[6] == command + 0x40 && read(reply.bytes + 9, 2) == token)
+                        touched = now;
                 }
                 return;
             }
@@ -97,7 +101,7 @@ public:
             append(reply, p[0]); number(reply, revision, 5);
             append(reply, state.tracks[p[0]].length); append(reply, state.tracks[p[0]].muted);
             for (const auto &step : state.tracks[p[0]].steps) {
-                append(reply, step.notes[0]); append(reply, step.count ? step.velocity : 0);
+                append(reply, step.count ? step.notes[0] : 0); append(reply, step.count ? step.velocity : 0);
             }
             finish(reply);
             break;
@@ -181,9 +185,9 @@ private:
         else { ++revision; if (revision == UINT32_MAX) exhausted = true; }
     }
     static void projectPair(Sequencer::Step &step, uint8_t note, uint8_t velocity) {
-        if (step.notes[0] == note && (step.count ? step.velocity : 0) == velocity) return;
+        if ((step.count ? step.notes[0] : 0) == note && (step.count ? step.velocity : 0) == velocity) return;
         step.notes[0] = note; step.velocity = velocity;
-        if (!step.count && velocity) step.count = 1;
+        if (!step.count) step.count = 1;
     }
     bool stage(Reply &reply, uint8_t command, uint8_t source, const uint8_t *p) {
         if (!staged || read(p, 2) != token) { error(reply, command, Expired); return false; }
