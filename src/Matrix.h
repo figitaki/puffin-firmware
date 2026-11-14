@@ -48,7 +48,7 @@ int Layout[NumLayers][RowCount][ColCount] =
   //  Layer 2 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   {
     {'-',               '-',          '-',          MIDI_MODE,  LED_B1,    CHANGE_ID0,  CHANGE_ID1, CHANGE_ID2, CHANGE_ID3,   '-',            '-',            '-'},
-    {'`',               '1',          '2',          '3',        '4',       '5',         '6',        '7',        '8',          '7',            '8',            '9'},
+    {'`',       LAYOUT_QWERTY, LAYOUT_COLEMAK, LAYOUT_DVORAK,    '4',       '5',         '6',        '7',        '8',          '7',            '8',            '9'},
     {KEY_CAPS_LOCK,     'a',          's',          '[',        '(',       '{',         '}',        ')',        ']',          '4',            '5',            '6'},
     {KEY_LEFT_SHIFT,    'z',          'x',          'c',        'v',       'b',         'n',        'm',        '-',          '1',            '2',            '3'},
     {KEY_LEFT_CTRL,     KEY_LEFT_ALT, FUNCTION_SW2, '-',        ' ',       '-',         ' ',        '-',        FUNCTION_SW,  '0',            KEY_BACKSPACE,  KEY_RETURN}

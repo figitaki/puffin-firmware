@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "KeyInput.h"
+#include "TypingLayout.h"
 
 struct Keyboard {
     KeyInput input;
@@ -237,6 +238,66 @@ void simultaneousModifiersPrecedeTyping() {
     assert(!keyboard.input.nextEvent(keyboard.map, keyboard.event));
 }
 
+void typingPresetsPreserveNonTypingBindings() {
+    KeyInput::Keymap map = {};
+    for (int layer = 0; layer < NumLayers; ++layer) {
+        for (int row = 0; row < RowCount; ++row) {
+            for (int col = 0; col < ColCount; ++col) {
+                map[layer][row][col] = 1000 + layer * 100 + row * 12 + col;
+            }
+        }
+    }
+    TypingLayout layout(map);
+    assert(layout.selected() == TypingLayout::Qwerty);
+    const char *expected[][3] = {
+        {"qwertyuiop", "asdfghjkl;", "zxcvbnm,./"},
+        {"qwfpbjluy;", "arstgmneio", "zxcdvkh,./"},
+        {"',.pyfgcrl", "aoeuidhtns", ";qjkxbmwvz"}
+    };
+    // Return to QWERTY after both alternatives, not just from initialization.
+    const int choices[] = {1, 2, 0};
+    for (int choice : choices) {
+        assert(layout.select(choice) && layout.selected() == choice);
+        for (int layer = 0; layer < NumLayers; ++layer) {
+            for (int row = 0; row < RowCount; ++row) {
+                for (int col = 0; col < ColCount; ++col) {
+                    int value = 1000 + layer * 100 + row * 12 + col;
+                    if (layer == 0 && row >= 1 && row <= 3) {
+                        if (col >= 1 && col <= (row == 3 ? 9 : 10)) {
+                            value = expected[choice][row - 1][col - 1];
+                        } else if (row == 3 && col == 11) {
+                            value = expected[choice][2][9];
+                        }
+                    }
+                    assert(map[layer][row][col] == value);
+                }
+            }
+        }
+    }
+    assert(!layout.select(-1) && !layout.select(3) && !layout.select(255));
+    assert(layout.selected() == TypingLayout::Qwerty && map[0][1][3] == 'e');
+}
+
+void typingLayoutChangesKeepCapturedReleases() {
+    Keyboard keyboard;
+    TypingLayout layout(keyboard.map);
+    keyboard.edge(1, 3, true, 0, 'e');
+    layout.select(TypingLayout::Colemak);
+    keyboard.edge(1, 3, false, 10, 'e');
+    keyboard.edge(1, 3, true, 20, 'f');
+    keyboard.edge(4, 8, true, 30, FUNCTION_SW);
+    layout.select(TypingLayout::Dvorak);
+    keyboard.edge(1, 3, false, 40, 'f');
+    keyboard.edge(1, 3, true, 50, 'b'); // Fn layer is not rearranged.
+    keyboard.edge(4, 8, false, 60, FUNCTION_SW);
+    keyboard.edge(1, 3, false, 70, 'b');
+    keyboard.edge(1, 3, true, 80, '.');
+    keyboard.edge(1, 3, false, 90, '.');
+    // Dvorak's bottom-right Z must not replace the up-arrow position.
+    keyboard.edge(3, 10, true, 100, 'a');
+    keyboard.edge(3, 11, true, 110, 'z');
+}
+
 int main() {
     debounce();
     independentSwitches();
@@ -249,5 +310,7 @@ int main() {
     simultaneousLayerPressesIgnoreScanOrder();
     sharedActionsRetainAllOwners();
     simultaneousModifiersPrecedeTyping();
+    typingPresetsPreserveNonTypingBindings();
+    typingLayoutChangesKeepCapturedReleases();
     puts("Key input regression tests passed");
 }

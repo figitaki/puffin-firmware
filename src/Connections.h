@@ -103,3 +103,6 @@
 #define TRACK_MUTE      344
 #define TRACK_SHORTER   345
 #define TRACK_LONGER    346
+#define LAYOUT_QWERTY   350
+#define LAYOUT_COLEMAK  351
+#define LAYOUT_DVORAK   352

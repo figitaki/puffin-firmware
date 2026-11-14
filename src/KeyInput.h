@@ -13,13 +13,18 @@ public:
         bool pressed;
     };
 
-    // Collect a complete matrix before resolving any actions with nextEvent.
-    void sample(int row, int col, bool down, uint32_t now) {
+    static bool fitted(int row, int col) {
+        if (row < 0 || row >= RowCount || col < 0 || col >= ColCount) return false;
         // The 51 fitted switches in the Puffin PCB's 5 x 12 matrix.
         static const uint16_t columns[RowCount] = {
             0x1F8, 0xFFF, 0xFFF, 0xFFF, 0xF57
         };
-        if (!(columns[row] & (1U << col))) return;
+        return columns[row] & (1U << col);
+    }
+
+    // Collect a complete matrix before resolving any actions with nextEvent.
+    void sample(int row, int col, bool down, uint32_t now) {
+        if (!fitted(row, col)) return;
 
         State &key = keys[row][col];
         if (down != key.raw) {
