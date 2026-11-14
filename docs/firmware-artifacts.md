@@ -87,12 +87,17 @@ edits, or publishes a release itself.
 
 Reruns never replace published firmware. Each asset that already exists on the
 release must match the rebuilt file byte for byte, and only missing assets are
-uploaded. Rebuilding the same commit with the same pinned toolchain has produced
-identical bytes, so a rerun is normally a no-op that only fills in missing
-assets. If anything differs, for example because the release description (and so
-the manifest's notes) was edited, the job fails without uploading. To republish
-on purpose, delete the old Puffin assets from the release, then rerun the
-workflow.
+uploaded. Separate GitHub Actions runs of the same source tree have produced
+identical images, so a rerun is normally a no-op that only fills in missing
+assets. (Local builds in a different checkout path produce different bytes, so
+compare local builds with CI by testing on the board, not by hash.) If anything
+differs, the job fails without uploading. To republish on purpose, delete the old
+Puffin assets from the release, then rerun the workflow.
+
+Manifest notes are a snapshot of the release description **at publication**.
+GitHub reruns reuse the original release event, so editing the description later
+changes neither a rerun's manifest nor a republished one. To ship different notes,
+publish a new release.
 
 ## Trust model
 

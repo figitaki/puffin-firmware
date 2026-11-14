@@ -84,7 +84,8 @@ jobs:
           fi
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$IMAGE"
           # Same schema as ios/PuffinUpdater FirmwareRelease; extra keys are ignored by the app.
-          # Notes are the release body's "- " or "* " bullet lines (at most 12, 300 characters each).
+          # Notes are the release body's "- " or "* " bullet lines (at most 12, 300 characters each),
+          # taken from the event payload: reruns reuse the description as originally published.
           jq -n --arg version "$VERSION" --arg tag "$TAG" --arg commit "$RELEASE_SHA" \
             --arg file "$IMAGE" --arg url "$url" --argjson size "$size" --arg sha256 "$sha" \
             --arg body "$RELEASE_BODY" '{
