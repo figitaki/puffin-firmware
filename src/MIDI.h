@@ -179,7 +179,19 @@ void panicMIDI(){
   noteKeyboard.releaseAll();
   noteOutput.panic();
   midi_out->sendNow();
-  if(serialOutput) Serial0.flush();
+  // The BLE bridge also writes TRS when it is not the selected output, so
+  // always drain the UART; a restart must not cut a message in half.
+  Serial0.flush();
+}
+
+// Owned notes are gone after any reset, and decoded boot noise can start notes
+// Puffin never sent, so clear every channel on the TRS output.
+void allNotesOffTRS(){
+  for(uint8_t channel = 1; channel <= 16; ++channel) {
+    midi_ser.sendControlChange({123, Channel::createChannel(channel)}, 0);
+  }
+  midi_ser.sendNow();
+  Serial0.flush();
 }
 
 void setupSequencer(){
@@ -281,10 +293,16 @@ void setupBleSerPipe(){
 
 void setMidiMode(bool on){
   panicMIDI();
+  if(midiMode) allNotesOffTRS();
   EEPROM.begin(4);                                      //Begin EEPROM, allow us to store
   EEPROM.write(1,on);
   EEPROM.commit();
   esp_sleep_enable_timer_wakeup(1);
+  // The ROM prints its boot banner at 115200 baud on UART0 TX (GPIO43, the
+  // MIDI tip) after every reset; at 31250 baud it decodes as Note Ons that are
+  // never released. This RTC register bit silences it for the wake from this
+  // sleep only. It is not an eFuse and changes nothing permanently.
+  esp_deep_sleep_disable_rom_logging();
   esp_deep_sleep_start(); 
 }
 
