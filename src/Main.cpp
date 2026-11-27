@@ -53,7 +53,12 @@ bool updateKeysHeld() {
 
 //Setup, onces once on boot
 void setup() {
-  
+  // UART0 TX (GPIO43) is the TRS MIDI tip, but it is also the IDF console.
+  // Runtime ESP_LOG and ets_printf text written there becomes running-status
+  // note data at 31250 baud; USB CDC Serial is unaffected.
+  esp_log_level_set("*", ESP_LOG_NONE);
+  uartSetDebug(NULL);
+
   Wire.begin();
   boardStart();
 
@@ -125,6 +130,15 @@ void setup() {
     }
     // Initialize the MIDI interfaces
     MIDI_Interface::beginAll();
+    allNotesOffTRS(); // Clears notes left by a reset or by boot output.
+    switch(esp_reset_reason()) {
+      case ESP_RST_BROWNOUT: showProjectNotice("RESET: BROWNOUT"); break;
+      case ESP_RST_PANIC: showProjectNotice("RESET: CRASH"); break;
+      case ESP_RST_INT_WDT:
+      case ESP_RST_TASK_WDT:
+      case ESP_RST_WDT: showProjectNotice("RESET: WATCHDOG"); break;
+      default: break;
+    }
     midi_ble.setCallbacks(callback); // Attach the custom callback
     midi_ser.setCallbacks(callback);
     //midi_ble.begin();
